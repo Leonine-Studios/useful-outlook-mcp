@@ -321,6 +321,7 @@ export const calendarToolDefinitions = [
   {
     name: 'list-calendars',
     description: 'List all calendars for the authenticated user',
+    readOnly: true,
     inputSchema: {
       type: 'object' as const,
       properties: {},
@@ -330,6 +331,7 @@ export const calendarToolDefinitions = [
   {
     name: 'list-calendar-events',
     description: 'List calendar events from a calendar. Defaults to primary calendar.',
+    readOnly: true,
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -360,6 +362,7 @@ export const calendarToolDefinitions = [
   {
     name: 'get-calendar-event',
     description: 'Get a single calendar event by its ID',
+    readOnly: true,
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -375,6 +378,7 @@ export const calendarToolDefinitions = [
   {
     name: 'get-calendar-view',
     description: 'Get calendar events within a specific time range',
+    readOnly: true,
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -402,6 +406,7 @@ export const calendarToolDefinitions = [
   {
     name: 'create-calendar-event',
     description: 'Create a new calendar event',
+    readOnly: false,
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -454,6 +459,7 @@ export const calendarToolDefinitions = [
   {
     name: 'update-calendar-event',
     description: 'Update an existing calendar event',
+    readOnly: false,
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -493,6 +499,7 @@ export const calendarToolDefinitions = [
   {
     name: 'delete-calendar-event',
     description: 'Delete a calendar event',
+    readOnly: false,
     inputSchema: {
       type: 'object' as const,
       properties: {

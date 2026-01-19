@@ -23,6 +23,10 @@ export interface Config {
   rateLimitWindowMs: number;
   /** Allowed tenant IDs (comma-separated, empty = all tenants allowed) */
   allowedTenants: string[];
+  /** Read-only mode: when true, disables all write tools */
+  readOnlyMode: boolean;
+  /** Enabled tools: comma-separated list of tool names (empty = all tools) */
+  enabledTools: string[];
 }
 
 let cachedConfig: Config | null = null;
@@ -48,6 +52,13 @@ export function getConfig(): Config {
     .map(t => t.trim())
     .filter(t => t.length > 0);
 
+  // Parse enabled tools from comma-separated string
+  const enabledToolsEnv = process.env.MS365_MCP_ENABLED_TOOLS || '';
+  const enabledTools = enabledToolsEnv
+    .split(',')
+    .map(t => t.trim())
+    .filter(t => t.length > 0);
+
   cachedConfig = {
     clientId,
     clientSecret: process.env.MS365_MCP_CLIENT_SECRET || undefined,
@@ -59,6 +70,8 @@ export function getConfig(): Config {
     rateLimitRequests: parseInt(process.env.MS365_MCP_RATE_LIMIT_REQUESTS || '30', 10),
     rateLimitWindowMs: parseInt(process.env.MS365_MCP_RATE_LIMIT_WINDOW_MS || '60000', 10),
     allowedTenants,
+    readOnlyMode: process.env.MS365_MCP_READ_ONLY_MODE === 'true',
+    enabledTools,
   };
 
   return cachedConfig;

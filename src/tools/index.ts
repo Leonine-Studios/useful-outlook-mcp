@@ -4,10 +4,14 @@
 
 import { mailToolDefinitions } from './mail.js';
 import { calendarToolDefinitions } from './calendar.js';
+import { getConfig } from '../config.js';
+import logger from '../utils/logger.js';
 
 export interface ToolDefinition {
   name: string;
   description: string;
+  /** Whether this tool is read-only (doesn't modify data) */
+  readOnly: boolean;
   inputSchema: {
     type: 'object';
     properties: Record<string, unknown>;
@@ -39,6 +43,46 @@ export function getTool(name: string): ToolDefinition | undefined {
  */
 export function getToolNames(): string[] {
   return allTools.map(t => t.name);
+}
+
+/**
+ * Get filtered tools based on configuration
+ * Applies both read-only mode and tool allowlist filtering.
+ * When both are enabled: tool filter is applied first, then read-only removes write tools.
+ */
+export function getFilteredTools(): ToolDefinition[] {
+  const config = getConfig();
+  let tools = [...allTools];
+
+  // Apply tool allowlist filter first (if configured)
+  if (config.enabledTools.length > 0) {
+    const enabledSet = new Set(config.enabledTools);
+    const beforeCount = tools.length;
+    tools = tools.filter(t => enabledSet.has(t.name));
+    
+    const disabledByFilter = beforeCount - tools.length;
+    if (disabledByFilter > 0) {
+      logger.info('Tool filter applied', {
+        enabledTools: config.enabledTools,
+        disabledCount: disabledByFilter,
+      });
+    }
+  }
+
+  // Apply read-only mode filter (removes write tools)
+  if (config.readOnlyMode) {
+    const beforeCount = tools.length;
+    const disabledTools = tools.filter(t => !t.readOnly).map(t => t.name);
+    tools = tools.filter(t => t.readOnly);
+    
+    if (disabledTools.length > 0) {
+      logger.info('Read-only mode enabled', {
+        disabledWriteTools: disabledTools,
+      });
+    }
+  }
+
+  return tools;
 }
 
 /**

@@ -243,6 +243,7 @@ export const mailToolDefinitions = [
   {
     name: 'list-mail-folders',
     description: 'List all mail folders for the authenticated user',
+    readOnly: true,
     inputSchema: {
       type: 'object' as const,
       properties: {},
@@ -252,6 +253,7 @@ export const mailToolDefinitions = [
   {
     name: 'list-mail-messages',
     description: 'List mail messages from a folder. Defaults to Inbox.',
+    readOnly: true,
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -286,6 +288,7 @@ export const mailToolDefinitions = [
   {
     name: 'get-mail-message',
     description: 'Get a single mail message by its ID',
+    readOnly: true,
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -301,6 +304,7 @@ export const mailToolDefinitions = [
   {
     name: 'send-mail',
     description: 'Send an email message',
+    readOnly: false,
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -349,6 +353,7 @@ export const mailToolDefinitions = [
   {
     name: 'delete-mail-message',
     description: 'Delete a mail message (moves to Deleted Items)',
+    readOnly: false,
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -364,6 +369,7 @@ export const mailToolDefinitions = [
   {
     name: 'move-mail-message',
     description: 'Move a mail message to a different folder',
+    readOnly: false,
     inputSchema: {
       type: 'object' as const,
       properties: {

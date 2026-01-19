@@ -6,7 +6,7 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { allTools } from '../tools/index.js';
+import { allTools, getFilteredTools } from '../tools/index.js';
 import logger from '../utils/logger.js';
 
 /**
@@ -18,9 +18,24 @@ export function createMcpServer(version: string): McpServer {
     version,
   });
 
-  // Register all tools
-  for (const tool of allTools) {
-    logger.debug('Registering tool', { name: tool.name });
+  // Get filtered tools based on config (read-only mode and/or tool allowlist)
+  const tools = getFilteredTools();
+  
+  // Log tool filtering summary
+  if (tools.length < allTools.length) {
+    const disabledTools = allTools
+      .filter(t => !tools.some(ft => ft.name === t.name))
+      .map(t => t.name);
+    logger.info('Tool filtering active', {
+      totalTools: allTools.length,
+      enabledTools: tools.length,
+      disabledTools,
+    });
+  }
+
+  // Register filtered tools
+  for (const tool of tools) {
+    logger.debug('Registering tool', { name: tool.name, readOnly: tool.readOnly });
     
     // Convert JSON Schema properties to Zod schema
     const zodSchema = createZodSchema(tool.inputSchema);
@@ -56,7 +71,10 @@ export function createMcpServer(version: string): McpServer {
     );
   }
 
-  logger.info('MCP server initialized', { toolCount: allTools.length });
+  logger.info('MCP server initialized', { 
+    toolCount: tools.length,
+    totalAvailable: allTools.length,
+  });
 
   return server;
 }
