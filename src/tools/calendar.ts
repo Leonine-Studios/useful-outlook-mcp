@@ -21,12 +21,10 @@ const listCalendarEventsSchema = z.object({
 });
 
 const searchCalendarEventsSchema = z.object({
-  query: z.string().optional(),
   subject: z.string().optional(),
   organizerEmail: z.string().optional(),
   organizerName: z.string().optional(),
   attendees: z.array(z.string()).optional(),
-  location: z.string().optional(),
   isOnlineMeeting: z.boolean().optional(),
   isAllDay: z.boolean().optional(),
   startAfter: z.string().optional(),
@@ -175,11 +173,48 @@ async function listCalendarEvents(params: Record<string, unknown>) {
 /**
  * Build filter expression for calendar event search
  */
+/**
+ * Format a free-text query parameter for calendar search
+ * 
+ * - If query looks like raw KQL (contains operators), pass through as-is
+ * - If query is a multi-word phrase, quote it
+ * - Single terms pass through unquoted
+ */
+function formatCalendarQuery(query: string): string {
+  const cleaned = query.trim();
+  
+  // Check if this looks like raw KQL (contains operators)
+  const hasKqlOperators = /\b(AND|OR|NOT)\b/i.test(cleaned);
+  
+  if (hasKqlOperators) {
+    // Raw KQL - pass through as-is
+    return cleaned;
+  }
+  
+  // Only quote multi-word phrases (those with spaces)
+  // Single terms like "deadline", "project" work better unquoted
+  if (/\s/.test(cleaned)) {
+    // Multi-word phrase - escape existing quotes and wrap
+    const escaped = cleaned.replace(/"/g, '\\"');
+    return `\\"${escaped}\\"`;
+  }
+  
+  // Single term - pass through unquoted
+  return cleaned;
+}
+
+/**
+ * Build OData filter expression for calendar events
+ * 
+ * Note: Graph API calendar events have severe limitations:
+ * - NO filtering on organizer/emailAddress/address (causes 500 error)
+ * - organizerEmail must be filtered client-side
+ * - location filtering removed (unreliable) - use isOnlineMeeting instead
+ */
 function buildCalendarFilter(params: {
   subject?: string;
   organizerEmail?: string;
   organizerName?: string;
-  location?: string;
   isAllDay?: boolean;
   startAfter?: string;
   startBefore?: string;
@@ -189,14 +224,10 @@ function buildCalendarFilter(params: {
   if (params.subject) {
     filters.push(`contains(subject, '${params.subject}')`);
   }
-  if (params.organizerEmail) {
-    filters.push(`organizer/emailAddress/address eq '${params.organizerEmail}'`);
-  }
+  // organizerEmail is NOT included - Graph API doesn't support it (500 error)
+  // It will be filtered client-side in searchCalendarEvents
   if (params.organizerName) {
     filters.push(`contains(organizer/emailAddress/name, '${params.organizerName}')`);
-  }
-  if (params.location) {
-    filters.push(`contains(location/displayName, '${params.location}')`);
   }
   if (params.isAllDay !== undefined) {
     filters.push(`isAllDay eq ${params.isAllDay}`);
@@ -216,11 +247,10 @@ function buildCalendarFilter(params: {
  */
 async function searchCalendarEvents(params: Record<string, unknown>) {
   const parsed = searchCalendarEventsSchema.parse(params);
-  const { query, subject, organizerEmail, organizerName, attendees, location, isOnlineMeeting, isAllDay, startAfter, startBefore, top } = parsed;
+  const { subject, organizerEmail, organizerName, attendees, isOnlineMeeting, isAllDay, startAfter, startBefore, top } = parsed;
   
   logger.info('Tool: search-calendar-events', { 
     user: getContextUserId(),
-    query,
     subject,
     organizerEmail,
     top,
@@ -233,7 +263,7 @@ async function searchCalendarEvents(params: Record<string, unknown>) {
     queryParams.set('$select', 'id,subject,start,end,location,organizer,attendees,isAllDay,isCancelled,isOnlineMeeting,onlineMeetingUrl,bodyPreview');
     
     // Build filter from parameters
-    const filter = buildCalendarFilter({ subject, organizerEmail, organizerName, location, isAllDay, startAfter, startBefore });
+    const filter = buildCalendarFilter({ subject, organizerEmail, organizerName, isAllDay, startAfter, startBefore });
     
     // If using date range with both dates, use calendarView
     if (startAfter && startBefore) {
@@ -241,7 +271,7 @@ async function searchCalendarEvents(params: Record<string, unknown>) {
       queryParams.set('endDateTime', startBefore);
       
       // Apply additional filters if any (except date ones which are in URL params)
-      const nonDateFilter = buildCalendarFilter({ subject, organizerEmail, organizerName, location, isAllDay });
+      const nonDateFilter = buildCalendarFilter({ subject, organizerEmail, organizerName, isAllDay });
       if (nonDateFilter) queryParams.set('$filter', nonDateFilter);
       
       const url = `/me/calendarView?${queryParams.toString()}`;
@@ -249,6 +279,15 @@ async function searchCalendarEvents(params: Record<string, unknown>) {
       
       // Post-filter for properties not supported in $filter
       let events = (response.data as { value: unknown[] })?.value || [];
+      
+      // Filter by organizerEmail (Graph API doesn't support this in $filter)
+      if (organizerEmail) {
+        const emailLower = organizerEmail.toLowerCase();
+        events = events.filter((e: unknown) => {
+          const event = e as { organizer?: { emailAddress?: { address?: string } } };
+          return event.organizer?.emailAddress?.address?.toLowerCase().includes(emailLower);
+        });
+      }
       
       if (isOnlineMeeting !== undefined) {
         events = events.filter((e: unknown) => {
@@ -265,18 +304,6 @@ async function searchCalendarEvents(params: Record<string, unknown>) {
             eventAttendees.some(ea => 
               ea.emailAddress?.address?.toLowerCase().includes(searchAttendee.toLowerCase())
             )
-          );
-        });
-      }
-      
-      if (query) {
-        const queryLower = query.toLowerCase();
-        events = events.filter((e: unknown) => {
-          const event = e as { subject?: string; bodyPreview?: string; location?: { displayName?: string } };
-          return (
-            event.subject?.toLowerCase().includes(queryLower) ||
-            event.bodyPreview?.toLowerCase().includes(queryLower) ||
-            event.location?.displayName?.toLowerCase().includes(queryLower)
           );
         });
       }
@@ -298,6 +325,15 @@ async function searchCalendarEvents(params: Record<string, unknown>) {
     // Post-filter for properties not supported in $filter
     let events = (response.data as { value: unknown[] })?.value || [];
     
+    // Filter by organizerEmail (Graph API doesn't support this in $filter)
+    if (organizerEmail) {
+      const emailLower = organizerEmail.toLowerCase();
+      events = events.filter((e: unknown) => {
+        const event = e as { organizer?: { emailAddress?: { address?: string } } };
+        return event.organizer?.emailAddress?.address?.toLowerCase().includes(emailLower);
+      });
+    }
+    
     if (isOnlineMeeting !== undefined) {
       events = events.filter((e: unknown) => {
         const event = e as { isOnlineMeeting?: boolean };
@@ -313,18 +349,6 @@ async function searchCalendarEvents(params: Record<string, unknown>) {
           eventAttendees.some(ea => 
             ea.emailAddress?.address?.toLowerCase().includes(searchAttendee.toLowerCase())
           )
-        );
-      });
-    }
-    
-    if (query) {
-      const queryLower = query.toLowerCase();
-      events = events.filter((e: unknown) => {
-        const event = e as { subject?: string; bodyPreview?: string; location?: { displayName?: string } };
-        return (
-          event.subject?.toLowerCase().includes(queryLower) ||
-          event.bodyPreview?.toLowerCase().includes(queryLower) ||
-          event.location?.displayName?.toLowerCase().includes(queryLower)
         );
       });
     }
@@ -675,56 +699,58 @@ Examples:
   },
   {
     name: 'search-calendar-events',
-    description: `Search calendar events with advanced filtering by subject, organizer, attendees, location, and more.
+    description: `Search calendar events with advanced filtering by subject, organizer, attendees, online/in-person, and more.
+
+CRITICAL - EMAIL ADDRESSES REQUIRED:
+- If user provides PEOPLE NAMES (e.g., "John Doe", "Jane Smith"), names will NOT work
+- FIRST use 'search-mail' with "query" parameter (e.g., {"query": "John Doe", "top": 5}) to find emails
+- EXTRACT their email addresses from the mail results (look in from/toRecipients fields)
+- THEN call this tool with the extracted email addresses
+- DO NOT ask the user for email addresses - look them up yourself using search-mail
 
 Use this tool for:
-- Keyword search in event subject/body/location
-- Filtering by organizer (email or name)
-- Filtering by attendees
-- Finding only Teams/online meetings
+- Filtering by subject keywords
+- Filtering by organizer (requires email address)
+- Filtering by attendees (requires email addresses)
+- Finding Teams/online meetings vs in-person meetings (use isOnlineMeeting)
 - Finding all-day events
 
-For simple date range listing, use list-calendar-events instead.
+IMPORTANT:
+- Always use DATE RANGE (startAfter + startBefore) for reliable results
+- Location filtering is not supported - use isOnlineMeeting to filter Teams vs in-person
+- Subject filtering is case-insensitive
 
 Examples:
-- Find meetings about budget: { "query": "budget review", "startAfter": "2026-01-01T00:00:00Z" }
-- Find meetings organized by Alice: { "organizerEmail": "alice@company.com" }
-- Find online meetings: { "isOnlineMeeting": true, "startAfter": "2026-01-20T00:00:00Z", "startBefore": "2026-01-27T00:00:00Z" }
-- Find meetings with specific attendee: { "attendees": ["bob@company.com"] }
-- Find meetings at specific location: { "location": "Conference Room A" }`,
+- Find meetings about Project X: { "subject": "Project X", "startAfter": "2026-01-01T00:00:00Z", "startBefore": "2026-01-31T23:59:59Z" }
+- Find meetings organized by Alice: { "organizerEmail": "alice@company.com", "startAfter": "2026-01-01T00:00:00Z" }
+- Find all Teams meetings this week: { "isOnlineMeeting": true, "startAfter": "2026-01-20T00:00:00Z", "startBefore": "2026-01-27T00:00:00Z" }
+- Find meetings with Bob: { "attendees": ["bob@company.com"], "startAfter": "2026-01-01T00:00:00Z" }
+- Find all-day events: { "isAllDay": true, "startAfter": "2026-01-01T00:00:00Z", "startBefore": "2026-01-31T23:59:59Z" }`,
     readOnly: true,
     requiredScopes: ['Calendars.Read'],
     inputSchema: {
       type: 'object' as const,
       properties: {
-        query: {
-          type: 'string',
-          description: 'Free-text search (subject, body, location)',
-        },
         subject: {
           type: 'string',
-          description: 'Filter by subject containing this text',
+          description: 'Filter by subject containing this text (case-insensitive)',
         },
         organizerEmail: {
           type: 'string',
-          description: 'Filter by organizer email address. Example: "alice@company.com"',
+          description: 'Organizer EMAIL ADDRESS. If you only have a name, use search-mail with query parameter (e.g., {"query": "John Doe"}) to find their email first.',
         },
         organizerName: {
           type: 'string',
-          description: 'Filter by organizer name containing this text',
+          description: 'Organizer name (UNRELIABLE - avoid using)',
         },
         attendees: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Filter by attendee email addresses. Example: ["bob@company.com", "carol@company.com"]',
-        },
-        location: {
-          type: 'string',
-          description: 'Filter by location name. Example: "Conference Room A"',
+          description: 'Attendee EMAIL ADDRESSES. If you only have names, use search-mail with query parameter to find their emails first. OR logic - matches if any attendee is found.',
         },
         isOnlineMeeting: {
           type: 'boolean',
-          description: 'Filter for Teams/online meetings only (true) or in-person only (false)',
+          description: 'Filter for Teams/online meetings (true) or in-person meetings (false)',
         },
         isAllDay: {
           type: 'boolean',
@@ -751,6 +777,12 @@ Examples:
     description: `Find available meeting times when all specified attendees are free. Uses Microsoft's scheduling algorithm to suggest optimal time slots.
 
 This is the key tool for scheduling meetings with multiple people. It checks everyone's free/busy status (same access as Outlook) and returns ranked suggestions.
+
+CRITICAL - EMAIL ADDRESSES REQUIRED:
+- If user provides PEOPLE NAMES, DO NOT ask the user for emails
+- FIRST use 'search-mail' with "query" parameter (e.g., {"query": "Jane Smith", "top": 5}) to find emails
+- EXTRACT their email addresses from the mail results (look in from/toRecipients fields)
+- THEN call this tool with the extracted email addresses
 
 Returns a list of suggested time slots with:
 - confidence score (0-100%) based on attendee availability
@@ -794,12 +826,12 @@ After finding times, use create-calendar-event to book the meeting.`,
           items: {
             type: 'object',
             properties: {
-              email: { type: 'string', description: 'Attendee email address' },
+              email: { type: 'string', description: 'Attendee email address (if you only have a name, use search-mail with query parameter to find their email first)' },
               type: { type: 'string', enum: ['required', 'optional'], description: 'required = must attend, optional = nice to have' },
             },
             required: ['email'],
           },
-          description: 'List of attendees with their email and type (required/optional)',
+          description: 'List of attendees with their email and type (required/optional). If you only have names, use search-mail with query parameter (e.g., {"query": "Jane Smith"}) to find their emails first.',
         },
         durationMinutes: {
           type: 'number',
