@@ -18,6 +18,19 @@ export function createMcpServer(version: string): McpServer {
     version,
   });
 
+  // Log when tools are listed
+  const originalListTools = server.server.listTools?.bind(server.server);
+  if (originalListTools) {
+    server.server.listTools = async () => {
+      const result = await originalListTools();
+      logger.info('tools/list response', { 
+        toolCount: result.tools?.length,
+        toolNames: result.tools?.map((t: { name: string }) => t.name),
+      });
+      return result;
+    };
+  }
+
   // Get filtered tools based on config (read-only mode and/or tool allowlist)
   const tools = getFilteredTools();
   
@@ -34,45 +47,54 @@ export function createMcpServer(version: string): McpServer {
   }
 
   // Register filtered tools
+  let registeredCount = 0;
   for (const tool of tools) {
-    logger.debug('Registering tool', { name: tool.name, readOnly: tool.readOnly });
-    
-    // Convert JSON Schema properties to Zod schema
-    const zodSchema = createZodSchema(tool.inputSchema);
-    
-    server.registerTool(
-      tool.name,
-      {
-        description: tool.description,
-        inputSchema: zodSchema,
-      },
-      async (args) => {
-        logger.info('Tool called', { tool: tool.name });
-        
-        try {
-          const result = await tool.handler(args);
-          return result;
-        } catch (error) {
-          logger.error('Tool execution error', {
-            tool: tool.name,
-            error: error instanceof Error ? error.message : String(error),
-          });
-          return {
-            content: [{
-              type: 'text' as const,
-              text: JSON.stringify({
-                error: error instanceof Error ? error.message : 'Tool execution failed',
-              }),
-            }],
-            isError: true,
-          };
+    try {
+      // Convert JSON Schema properties to Zod schema
+      const zodSchema = createZodSchema(tool.inputSchema);
+      
+      server.registerTool(
+        tool.name,
+        {
+          description: tool.description,
+          inputSchema: zodSchema,
+        },
+        async (args) => {
+          logger.info('Tool called', { tool: tool.name });
+          
+          try {
+            const result = await tool.handler(args);
+            return result;
+          } catch (error) {
+            logger.error('Tool execution error', {
+              tool: tool.name,
+              error: error instanceof Error ? error.message : String(error),
+            });
+            return {
+              content: [{
+                type: 'text' as const,
+                text: JSON.stringify({
+                  error: error instanceof Error ? error.message : 'Tool execution failed',
+                }),
+              }],
+              isError: true,
+            };
+          }
         }
-      }
-    );
+      );
+      registeredCount++;
+    } catch (error) {
+      logger.error('Failed to register tool', {
+        name: tool.name,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+    }
   }
 
   logger.info('MCP server initialized', { 
-    toolCount: tools.length,
+    toolCount: registeredCount,
+    requestedTools: tools.length,
     totalAvailable: allTools.length,
   });
 

@@ -44,6 +44,26 @@ const moveMailMessageSchema = z.object({
   destinationFolderId: z.string(),
 });
 
+const createDraftMailSchema = z.object({
+  to: z.array(z.string()).optional(),
+  subject: z.string().optional(),
+  body: z.string().optional(),
+  bodyType: z.enum(['html', 'text']).optional().default('html'),
+  cc: z.array(z.string()).optional(),
+  bcc: z.array(z.string()).optional(),
+  importance: z.enum(['low', 'normal', 'high']).optional().default('normal'),
+});
+
+const replyMailSchema = z.object({
+  messageId: z.string(),
+  comment: z.string(),
+});
+
+const createReplyDraftSchema = z.object({
+  messageId: z.string(),
+  comment: z.string().optional(),
+});
+
 // ============================================================================
 // Tool Implementations
 // ============================================================================
@@ -235,6 +255,187 @@ async function moveMailMessage(params: Record<string, unknown>) {
   }
 }
 
+/**
+ * Create an email draft (saves to Drafts folder)
+ */
+async function createDraftMail(params: Record<string, unknown>) {
+  const { to, subject, body, bodyType, cc, bcc, importance } = createDraftMailSchema.parse(params);
+  
+  logger.info('Tool: create-draft-mail', { 
+    user: getContextUserId(),
+    to: to?.length ?? 0,
+    subject: subject?.substring(0, 50),
+  });
+  
+  try {
+    const message: Record<string, unknown> = {
+      importance,
+    };
+    
+    if (subject) {
+      message.subject = subject;
+    }
+    
+    if (body) {
+      message.body = {
+        contentType: bodyType === 'html' ? 'HTML' : 'Text',
+        content: body,
+      };
+    }
+    
+    if (to?.length) {
+      message.toRecipients = to.map(email => ({
+        emailAddress: { address: email },
+      }));
+    }
+    
+    if (cc?.length) {
+      message.ccRecipients = cc.map(email => ({
+        emailAddress: { address: email },
+      }));
+    }
+    
+    if (bcc?.length) {
+      message.bccRecipients = bcc.map(email => ({
+        emailAddress: { address: email },
+      }));
+    }
+    
+    const response = await graphRequest('/me/messages', {
+      method: 'POST',
+      body: message,
+    });
+    
+    return handleGraphResponse(response);
+  } catch (error) {
+    return formatErrorResponse(error);
+  }
+}
+
+/**
+ * Reply to a mail message (sends immediately)
+ */
+async function replyMail(params: Record<string, unknown>) {
+  const { messageId, comment } = replyMailSchema.parse(params);
+  
+  logger.info('Tool: reply-mail', { 
+    user: getContextUserId(),
+    messageId,
+  });
+  
+  try {
+    const response = await graphRequest(`/me/messages/${messageId}/reply`, {
+      method: 'POST',
+      body: {
+        comment,
+      },
+    });
+    
+    if (response.status === 202 || response.ok) {
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({ success: true, message: 'Reply sent successfully' }),
+        }],
+      };
+    }
+    
+    return handleGraphResponse(response);
+  } catch (error) {
+    return formatErrorResponse(error);
+  }
+}
+
+/**
+ * Reply all to a mail message (sends immediately)
+ */
+async function replyAllMail(params: Record<string, unknown>) {
+  const { messageId, comment } = replyMailSchema.parse(params);
+  
+  logger.info('Tool: reply-all-mail', { 
+    user: getContextUserId(),
+    messageId,
+  });
+  
+  try {
+    const response = await graphRequest(`/me/messages/${messageId}/replyAll`, {
+      method: 'POST',
+      body: {
+        comment,
+      },
+    });
+    
+    if (response.status === 202 || response.ok) {
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({ success: true, message: 'Reply-all sent successfully' }),
+        }],
+      };
+    }
+    
+    return handleGraphResponse(response);
+  } catch (error) {
+    return formatErrorResponse(error);
+  }
+}
+
+/**
+ * Create a reply draft (saves to Drafts folder)
+ */
+async function createReplyDraft(params: Record<string, unknown>) {
+  const { messageId, comment } = createReplyDraftSchema.parse(params);
+  
+  logger.info('Tool: create-reply-draft', { 
+    user: getContextUserId(),
+    messageId,
+  });
+  
+  try {
+    const body: Record<string, unknown> = {};
+    if (comment) {
+      body.comment = comment;
+    }
+    
+    const response = await graphRequest(`/me/messages/${messageId}/createReply`, {
+      method: 'POST',
+      body,
+    });
+    
+    return handleGraphResponse(response);
+  } catch (error) {
+    return formatErrorResponse(error);
+  }
+}
+
+/**
+ * Create a reply-all draft (saves to Drafts folder)
+ */
+async function createReplyAllDraft(params: Record<string, unknown>) {
+  const { messageId, comment } = createReplyDraftSchema.parse(params);
+  
+  logger.info('Tool: create-reply-all-draft', { 
+    user: getContextUserId(),
+    messageId,
+  });
+  
+  try {
+    const body: Record<string, unknown> = {};
+    if (comment) {
+      body.comment = comment;
+    }
+    
+    const response = await graphRequest(`/me/messages/${messageId}/createReplyAll`, {
+      method: 'POST',
+      body,
+    });
+    
+    return handleGraphResponse(response);
+  } catch (error) {
+    return formatErrorResponse(error);
+  }
+}
+
 // ============================================================================
 // Tool Definitions for MCP
 // ============================================================================
@@ -391,5 +592,134 @@ export const mailToolDefinitions = [
       required: ['messageId', 'destinationFolderId'],
     },
     handler: moveMailMessage,
+  },
+  {
+    name: 'create-draft-mail',
+    description: 'Create an email draft and save it to the Drafts folder. Returns the draft message ID which can be used to send or update it later.',
+    readOnly: false,
+    requiredScopes: ['Mail.ReadWrite'],
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        to: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Recipient email addresses (optional for drafts)',
+        },
+        subject: {
+          type: 'string',
+          description: 'Email subject',
+        },
+        body: {
+          type: 'string',
+          description: 'Email body content',
+        },
+        bodyType: {
+          type: 'string',
+          enum: ['html', 'text'],
+          description: 'Body content type (default: html)',
+        },
+        cc: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'CC recipients',
+        },
+        bcc: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'BCC recipients',
+        },
+        importance: {
+          type: 'string',
+          enum: ['low', 'normal', 'high'],
+          description: 'Email importance (default: normal)',
+        },
+      },
+    },
+    handler: createDraftMail,
+  },
+  {
+    name: 'reply-mail',
+    description: 'Reply to a mail message. Sends the reply immediately to the original sender.',
+    readOnly: false,
+    requiredScopes: ['Mail.Send'],
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        messageId: {
+          type: 'string',
+          description: 'The ID of the message to reply to',
+        },
+        comment: {
+          type: 'string',
+          description: 'The reply body content',
+        },
+      },
+      required: ['messageId', 'comment'],
+    },
+    handler: replyMail,
+  },
+  {
+    name: 'reply-all-mail',
+    description: 'Reply to all recipients of a mail message. Sends the reply immediately to all original recipients.',
+    readOnly: false,
+    requiredScopes: ['Mail.Send'],
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        messageId: {
+          type: 'string',
+          description: 'The ID of the message to reply to',
+        },
+        comment: {
+          type: 'string',
+          description: 'The reply body content',
+        },
+      },
+      required: ['messageId', 'comment'],
+    },
+    handler: replyAllMail,
+  },
+  {
+    name: 'create-reply-draft',
+    description: 'Create a reply draft to a mail message. Saves the draft to the Drafts folder for review before sending.',
+    readOnly: false,
+    requiredScopes: ['Mail.ReadWrite'],
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        messageId: {
+          type: 'string',
+          description: 'The ID of the message to reply to',
+        },
+        comment: {
+          type: 'string',
+          description: 'The reply body content (optional)',
+        },
+      },
+      required: ['messageId'],
+    },
+    handler: createReplyDraft,
+  },
+  {
+    name: 'create-reply-all-draft',
+    description: 'Create a reply-all draft to a mail message. Saves the draft to the Drafts folder for review before sending.',
+    readOnly: false,
+    requiredScopes: ['Mail.ReadWrite'],
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        messageId: {
+          type: 'string',
+          description: 'The ID of the message to reply to',
+        },
+        comment: {
+          type: 'string',
+          description: 'The reply body content (optional)',
+        },
+      },
+      required: ['messageId'],
+    },
+    handler: createReplyAllDraft,
   },
 ];
