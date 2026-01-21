@@ -1,6 +1,6 @@
 services:
   outlook-mcp:
-    image: ghcr.io/leonine-studios/outlook-oauth-remote-mcp:latest
+    image: ghcr.io/leonine-studios/useful-outlook-mcp:latest
     env_file:
       - .env
     environment:

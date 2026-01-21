@@ -14,7 +14,7 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
     # Only run on the original repo, not forks
-    if: github.repository == 'Leonine-Studios/outlook-oauth-remote-mcp'
+    if: github.repository == 'Leonine-Studios/useful-outlook-mcp'
     
     permissions:
       contents: read
