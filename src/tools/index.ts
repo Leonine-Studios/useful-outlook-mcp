@@ -59,29 +59,12 @@ export function getFilteredTools(): ToolDefinition[] {
   // Apply tool allowlist filter first (if configured)
   if (config.enabledTools.length > 0) {
     const enabledSet = new Set(config.enabledTools);
-    const beforeCount = tools.length;
     tools = tools.filter(t => enabledSet.has(t.name));
-    
-    const disabledByFilter = beforeCount - tools.length;
-    if (disabledByFilter > 0) {
-      logger.info('Tool filter applied', {
-        enabledTools: config.enabledTools,
-        disabledCount: disabledByFilter,
-      });
-    }
   }
 
   // Apply read-only mode filter (removes write tools)
   if (config.readOnlyMode) {
-    const beforeCount = tools.length;
-    const disabledTools = tools.filter(t => !t.readOnly).map(t => t.name);
     tools = tools.filter(t => t.readOnly);
-    
-    if (disabledTools.length > 0) {
-      logger.info('Read-only mode enabled', {
-        disabledWriteTools: disabledTools,
-      });
-    }
   }
 
   return tools;

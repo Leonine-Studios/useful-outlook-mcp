@@ -10,7 +10,8 @@ import authRouter from './auth/metadata.js';
 import { bearerAuthMiddleware, AuthenticatedRequest } from './auth/middleware.js';
 import { rateLimitMiddleware, getRateLimitStats } from './middleware/rate-limiter.js';
 import { runWithContext } from './utils/context.js';
-import logger, { setLogLevel } from './utils/logger.js';
+import logger, { setLogLevel, printStartupBanner } from './utils/logger.js';
+import { allTools, getFilteredTools } from './tools/index.js';
 
 const VERSION = '1.0.0';
 
@@ -156,20 +157,26 @@ export async function startServer(): Promise<void> {
   const config = getConfig();
   const app = createApp();
   
+  // Gather tool info for the banner
+  const filteredTools = getFilteredTools();
+  const enabledToolNames = filteredTools.map(t => t.name);
+  const disabledToolNames = allTools
+    .filter(t => !filteredTools.some(ft => ft.name === t.name))
+    .map(t => t.name);
+  
   app.listen(config.port, config.host, () => {
-    logger.info('Server started', {
+    printStartupBanner({
+      version: VERSION,
       host: config.host,
       port: config.port,
-      version: VERSION,
-      rateLimiting: {
-        requests: config.rateLimitRequests,
-        windowMs: config.rateLimitWindowMs,
-      },
+      logLevel: config.logLevel,
+      enabledTools: enabledToolNames,
+      disabledTools: disabledToolNames,
+      totalTools: allTools.length,
+      rateLimitRequests: config.rateLimitRequests,
+      rateLimitWindowMs: config.rateLimitWindowMs,
       allowedTenants: config.allowedTenants.length > 0 ? config.allowedTenants.length : 'all',
-    });
-    logger.info('Endpoints available', {
-      mcp: `http://${config.host === '0.0.0.0' ? 'localhost' : config.host}:${config.port}/mcp`,
-      oauth_discovery: `http://${config.host === '0.0.0.0' ? 'localhost' : config.host}:${config.port}/.well-known/oauth-protected-resource`,
+      readOnlyMode: config.readOnlyMode,
     });
   });
 }

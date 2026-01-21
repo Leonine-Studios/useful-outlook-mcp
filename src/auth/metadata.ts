@@ -107,7 +107,7 @@ router.post('/register', (req: Request, res: Response) => {
     token_endpoint_auth_method?: string;
   };
   
-  logger.info('Dynamic client registration request', { 
+  logger.debug('Dynamic client registration request', { 
     client_name: body.client_name,
     redirect_uris: body.redirect_uris,
   });
@@ -128,7 +128,7 @@ router.post('/register', (req: Request, res: Response) => {
   
   registeredClients.set(clientId, registeredClient);
   
-  logger.info('Client registered successfully', { 
+  logger.debug('Client registered successfully', { 
     client_id: clientId,
     client_name: body.client_name,
   });
@@ -192,7 +192,7 @@ router.get('/authorize', (req: Request, res: Response) => {
     microsoftAuthUrl.searchParams.set('scope', requiredScopes.join(' '));
   }
   
-  logger.info('Redirecting to Microsoft authorization', {
+  logger.debug('Redirecting to Microsoft authorization', {
     redirect_uri: req.query.redirect_uri,
     scope: microsoftAuthUrl.searchParams.get('scope'),
   });
@@ -243,7 +243,7 @@ router.post('/token', async (req: Request, res: Response) => {
       params.set('code_verifier', body.code_verifier);
     }
     
-    logger.info('Token exchange: authorization_code');
+    logger.debug('Token exchange: authorization_code');
   } else if (body.grant_type === 'refresh_token') {
     if (!body.refresh_token) {
       res.status(400).json({
@@ -255,7 +255,7 @@ router.post('/token', async (req: Request, res: Response) => {
     
     params.set('refresh_token', body.refresh_token);
     
-    logger.info('Token exchange: refresh_token');
+    logger.debug('Token exchange: refresh_token');
   } else {
     res.status(400).json({
       error: 'unsupported_grant_type',
@@ -284,7 +284,7 @@ router.post('/token', async (req: Request, res: Response) => {
       return;
     }
     
-    logger.info('Token exchange successful');
+    logger.debug('Token exchange successful');
     res.json(data);
   } catch (error) {
     logger.error('Token endpoint error', { 

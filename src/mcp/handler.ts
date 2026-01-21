@@ -6,8 +6,9 @@
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { allTools, getFilteredTools } from '../tools/index.js';
+import { getFilteredTools } from '../tools/index.js';
 import logger from '../utils/logger.js';
+import { getContextUserId } from '../utils/context.js';
 
 /**
  * Create and configure the MCP server
@@ -20,21 +21,8 @@ export function createMcpServer(version: string): McpServer {
 
   // Get filtered tools based on config (read-only mode and/or tool allowlist)
   const tools = getFilteredTools();
-  
-  // Log tool filtering summary
-  if (tools.length < allTools.length) {
-    const disabledTools = allTools
-      .filter(t => !tools.some(ft => ft.name === t.name))
-      .map(t => t.name);
-    logger.info('Tool filtering active', {
-      totalTools: allTools.length,
-      enabledTools: tools.length,
-      disabledTools,
-    });
-  }
 
   // Register filtered tools
-  let registeredCount = 0;
   for (const tool of tools) {
     try {
       // Convert JSON Schema properties to Zod schema
@@ -47,7 +35,7 @@ export function createMcpServer(version: string): McpServer {
           inputSchema: zodSchema,
         },
         async (args) => {
-          logger.info('Tool called', { tool: tool.name });
+          logger.info(tool.name, { user: getContextUserId() });
           
           try {
             const result = await tool.handler(args);
@@ -69,7 +57,6 @@ export function createMcpServer(version: string): McpServer {
           }
         }
       );
-      registeredCount++;
     } catch (error) {
       logger.error('Failed to register tool', {
         name: tool.name,
@@ -78,12 +65,6 @@ export function createMcpServer(version: string): McpServer {
       });
     }
   }
-
-  logger.info('MCP server initialized', { 
-    toolCount: registeredCount,
-    requestedTools: tools.length,
-    totalAvailable: allTools.length,
-  });
 
   return server;
 }

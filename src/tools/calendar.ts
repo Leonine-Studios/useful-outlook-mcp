@@ -4,8 +4,6 @@
 
 import { z } from 'zod';
 import { graphRequest, handleGraphResponse, formatErrorResponse } from '../graph/client.js';
-import logger from '../utils/logger.js';
-import { getContextUserId } from '../utils/context.js';
 
 // ============================================================================
 // Schemas
@@ -102,8 +100,6 @@ const deleteCalendarEventSchema = z.object({
  * List all calendars
  */
 async function listCalendars() {
-  logger.info('Tool: list-calendars', { user: getContextUserId() });
-  
   try {
     const response = await graphRequest<{ value: unknown[] }>('/me/calendars');
     return handleGraphResponse(response);
@@ -118,14 +114,6 @@ async function listCalendars() {
  */
 async function listCalendarEvents(params: Record<string, unknown>) {
   const { calendarId, startAfter, startBefore, top, skip, orderBy } = listCalendarEventsSchema.parse(params);
-  
-  logger.info('Tool: list-calendar-events', { 
-    user: getContextUserId(),
-    calendarId,
-    startAfter,
-    startBefore,
-    top,
-  });
   
   try {
     const queryParams = new URLSearchParams();
@@ -249,13 +237,6 @@ function buildCalendarFilter(params: {
 async function searchCalendarEvents(params: Record<string, unknown>) {
   const parsed = searchCalendarEventsSchema.parse(params);
   const { subject, organizerEmail, organizerName, attendees, isOnlineMeeting, isAllDay, startAfter, startBefore, top } = parsed;
-  
-  logger.info('Tool: search-calendar-events', { 
-    user: getContextUserId(),
-    subject,
-    organizerEmail,
-    top,
-  });
   
   try {
     const queryParams = new URLSearchParams();
@@ -393,16 +374,6 @@ async function findMeetingTimes(params: Record<string, unknown>) {
   const parsed = findMeetingTimesSchema.parse(params);
   const { attendees, durationMinutes, searchWindowStart, searchWindowEnd, meetingHoursStart, meetingHoursEnd, isOnlineMeeting, isOrganizerOptional, maxSuggestions, timeZone } = parsed;
   
-  logger.info('Tool: find-meeting-times', { 
-    user: getContextUserId(),
-    attendeeCount: attendees.length,
-    durationMinutes,
-    searchWindowStart,
-    searchWindowEnd,
-    meetingHoursStart,
-    meetingHoursEnd,
-  });
-  
   try {
     // Build the request body for findMeetingTimes
     const requestBody: Record<string, unknown> = {
@@ -506,11 +477,6 @@ async function findMeetingTimes(params: Record<string, unknown>) {
 async function getCalendarEvent(params: Record<string, unknown>) {
   const { eventId } = getCalendarEventSchema.parse(params);
   
-  logger.info('Tool: get-calendar-event', { 
-    user: getContextUserId(),
-    eventId,
-  });
-  
   try {
     const response = await graphRequest(`/me/events/${eventId}`);
     return handleGraphResponse(response);
@@ -524,12 +490,6 @@ async function getCalendarEvent(params: Record<string, unknown>) {
  */
 async function getCalendarView(params: Record<string, unknown>) {
   const { startDateTime, endDateTime, calendarId, top } = getCalendarViewSchema.parse(params);
-  
-  logger.info('Tool: get-calendar-view', { 
-    user: getContextUserId(),
-    startDateTime,
-    endDateTime,
-  });
   
   try {
     const queryParams = new URLSearchParams();
@@ -559,13 +519,6 @@ async function createCalendarEvent(params: Record<string, unknown>) {
     subject, start, end, timeZone, body, bodyType, 
     location, attendees, isAllDay, reminderMinutesBeforeStart, calendarId 
   } = createCalendarEventSchema.parse(params);
-  
-  logger.info('Tool: create-calendar-event', { 
-    user: getContextUserId(),
-    subject,
-    start,
-    end,
-  });
   
   try {
     const event: Record<string, unknown> = {
@@ -625,11 +578,6 @@ async function createCalendarEvent(params: Record<string, unknown>) {
 async function updateCalendarEvent(params: Record<string, unknown>) {
   const { eventId, subject, start, end, timeZone, body, location, attendees } = updateCalendarEventSchema.parse(params);
   
-  logger.info('Tool: update-calendar-event', { 
-    user: getContextUserId(),
-    eventId,
-  });
-  
   try {
     const updates: Record<string, unknown> = {};
     
@@ -669,11 +617,6 @@ async function updateCalendarEvent(params: Record<string, unknown>) {
  */
 async function deleteCalendarEvent(params: Record<string, unknown>) {
   const { eventId } = deleteCalendarEventSchema.parse(params);
-  
-  logger.info('Tool: delete-calendar-event', { 
-    user: getContextUserId(),
-    eventId,
-  });
   
   try {
     const response = await graphRequest(`/me/events/${eventId}`, {

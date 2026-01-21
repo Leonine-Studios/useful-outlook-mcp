@@ -5,7 +5,6 @@
 import { z } from 'zod';
 import { graphRequest, handleGraphResponse, formatErrorResponse } from '../graph/client.js';
 import logger from '../utils/logger.js';
-import { getContextUserId } from '../utils/context.js';
 
 // ============================================================================
 // Schemas
@@ -100,8 +99,6 @@ const listMailFoldersSchema = z.object({
 async function listMailFolders(params: Record<string, unknown>) {
   const { parentFolderId } = listMailFoldersSchema.parse(params);
   
-  logger.info('Tool: list-mail-folders', { user: getContextUserId(), parentFolderId });
-  
   try {
     // If parentFolderId is provided, list child folders; otherwise list top-level folders
     const endpoint = parentFolderId 
@@ -163,13 +160,6 @@ function buildMailFilter(params: {
 async function listMailMessages(params: Record<string, unknown>) {
   const parsed = listMailMessagesSchema.parse(params);
   const { folderId, top, skip, senderEmail, receivedAfter, receivedBefore, isRead, hasAttachments, importance, orderBy } = parsed;
-  
-  logger.info('Tool: list-mail-messages', { 
-    user: getContextUserId(),
-    folderId,
-    top,
-    senderEmail,
-  });
   
   try {
     const queryParams = new URLSearchParams();
@@ -317,14 +307,6 @@ async function searchMail(params: Record<string, unknown>) {
   const parsed = searchMailSchema.parse(params);
   const { query, from, to, cc, bcc, participants, subject, body, attachment, hasAttachments, importance, received, folderId, top } = parsed;
   
-  logger.info('Tool: search-mail', { 
-    user: getContextUserId(),
-    query,
-    from,
-    folderId,
-    top,
-  });
-  
   try {
     // If folderId is specified, $search is not supported on folder endpoints
     // Use $filter for simple cases, or fetch and filter client-side
@@ -408,11 +390,6 @@ async function searchMail(params: Record<string, unknown>) {
 async function getMailMessage(params: Record<string, unknown>) {
   const { messageId } = getMailMessageSchema.parse(params);
   
-  logger.info('Tool: get-mail-message', { 
-    user: getContextUserId(),
-    messageId,
-  });
-  
   try {
     const response = await graphRequest(`/me/messages/${messageId}`);
     return handleGraphResponse(response);
@@ -426,12 +403,6 @@ async function getMailMessage(params: Record<string, unknown>) {
  */
 async function sendMail(params: Record<string, unknown>) {
   const { to, subject, body, bodyType, cc, bcc, importance, saveToSentItems } = sendMailSchema.parse(params);
-  
-  logger.info('Tool: send-mail', { 
-    user: getContextUserId(),
-    to: to.length,
-    subject: subject.substring(0, 50),
-  });
   
   try {
     const message: Record<string, unknown> = {
@@ -487,11 +458,6 @@ async function sendMail(params: Record<string, unknown>) {
 async function deleteMailMessage(params: Record<string, unknown>) {
   const { messageId } = deleteMailMessageSchema.parse(params);
   
-  logger.info('Tool: delete-mail-message', { 
-    user: getContextUserId(),
-    messageId,
-  });
-  
   try {
     const response = await graphRequest(`/me/messages/${messageId}`, {
       method: 'DELETE',
@@ -518,12 +484,6 @@ async function deleteMailMessage(params: Record<string, unknown>) {
 async function moveMailMessage(params: Record<string, unknown>) {
   const { messageId, destinationFolderId } = moveMailMessageSchema.parse(params);
   
-  logger.info('Tool: move-mail-message', { 
-    user: getContextUserId(),
-    messageId,
-    destinationFolderId,
-  });
-  
   try {
     const response = await graphRequest(`/me/messages/${messageId}/move`, {
       method: 'POST',
@@ -543,12 +503,6 @@ async function moveMailMessage(params: Record<string, unknown>) {
  */
 async function createDraftMail(params: Record<string, unknown>) {
   const { to, subject, body, bodyType, cc, bcc, importance } = createDraftMailSchema.parse(params);
-  
-  logger.info('Tool: create-draft-mail', { 
-    user: getContextUserId(),
-    to: to?.length ?? 0,
-    subject: subject?.substring(0, 50),
-  });
   
   try {
     const message: Record<string, unknown> = {
@@ -601,11 +555,6 @@ async function createDraftMail(params: Record<string, unknown>) {
 async function replyMail(params: Record<string, unknown>) {
   const { messageId, comment } = replyMailSchema.parse(params);
   
-  logger.info('Tool: reply-mail', { 
-    user: getContextUserId(),
-    messageId,
-  });
-  
   try {
     const response = await graphRequest(`/me/messages/${messageId}/reply`, {
       method: 'POST',
@@ -634,11 +583,6 @@ async function replyMail(params: Record<string, unknown>) {
  */
 async function replyAllMail(params: Record<string, unknown>) {
   const { messageId, comment } = replyMailSchema.parse(params);
-  
-  logger.info('Tool: reply-all-mail', { 
-    user: getContextUserId(),
-    messageId,
-  });
   
   try {
     const response = await graphRequest(`/me/messages/${messageId}/replyAll`, {
@@ -669,11 +613,6 @@ async function replyAllMail(params: Record<string, unknown>) {
 async function createReplyDraft(params: Record<string, unknown>) {
   const { messageId, comment } = createReplyDraftSchema.parse(params);
   
-  logger.info('Tool: create-reply-draft', { 
-    user: getContextUserId(),
-    messageId,
-  });
-  
   try {
     const body: Record<string, unknown> = {};
     if (comment) {
@@ -696,11 +635,6 @@ async function createReplyDraft(params: Record<string, unknown>) {
  */
 async function createReplyAllDraft(params: Record<string, unknown>) {
   const { messageId, comment } = createReplyDraftSchema.parse(params);
-  
-  logger.info('Tool: create-reply-all-draft', { 
-    user: getContextUserId(),
-    messageId,
-  });
   
   try {
     const body: Record<string, unknown> = {};

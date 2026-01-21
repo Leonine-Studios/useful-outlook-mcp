@@ -63,7 +63,8 @@ export function bearerAuthMiddleware(
   const authHeader = req.headers.authorization;
 
   if (!authHeader) {
-    logger.warn('Missing Authorization header', { path: req.path });
+    // This is expected during MCP OAuth discovery - client probes without auth first
+    logger.debug('Missing Authorization header', { path: req.path });
     res.status(401).json({
       error: 'invalid_request',
       error_description: 'Missing Authorization header',
