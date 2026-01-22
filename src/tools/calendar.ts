@@ -61,7 +61,7 @@ const createCalendarEventSchema = z.object({
   subject: z.string(),
   start: z.string(),
   end: z.string(),
-  timeZone: z.string().optional().default('UTC'),
+  timeZone: z.string().optional().default('CET'),
   body: z.string().optional(),
   bodyType: z.enum(['html', 'text']).optional().default('text'),
   location: z.string().optional(),
@@ -78,7 +78,7 @@ const createDraftCalendarEventSchema = z.object({
   subject: z.string(),
   start: z.string(),
   end: z.string(),
-  timeZone: z.string().optional().default('UTC'),
+  timeZone: z.string().optional().default('CET'),
   body: z.string().optional(),
   bodyType: z.enum(['html', 'text']).optional().default('text'),
   location: z.string().optional(),
@@ -410,11 +410,11 @@ async function findMeetingTimes(params: Record<string, unknown>) {
       timeSlots: [{
         start: {
           dateTime: searchWindowStart,
-          timeZone: timeZone || 'UTC',
+          timeZone: timeZone || 'CET',
         },
         end: {
           dateTime: searchWindowEnd,
-          timeZone: timeZone || 'UTC',
+          timeZone: timeZone || 'CET',
         },
       }],
     };
@@ -542,11 +542,11 @@ async function createCalendarEvent(params: Record<string, unknown>) {
       subject,
       start: {
         dateTime: start,
-        timeZone: timeZone || 'UTC',
+        timeZone: timeZone || 'CET',
       },
       end: {
         dateTime: end,
-        timeZone: timeZone || 'UTC',
+        timeZone: timeZone || 'CET',
       },
       isAllDay,
     };
@@ -603,11 +603,11 @@ async function createDraftCalendarEvent(params: Record<string, unknown>) {
       subject,
       start: {
         dateTime: start,
-        timeZone: timeZone || 'UTC',
+        timeZone: timeZone || 'CET',
       },
       end: {
         dateTime: end,
-        timeZone: timeZone || 'UTC',
+        timeZone: timeZone || 'CET',
       },
       isAllDay,
       isDraft: true,
@@ -662,10 +662,10 @@ async function updateCalendarEvent(params: Record<string, unknown>) {
     
     if (subject !== undefined) updates.subject = subject;
     if (start !== undefined) {
-      updates.start = { dateTime: start, timeZone: timeZone || 'UTC' };
+      updates.start = { dateTime: start, timeZone: timeZone || 'CET' };
     }
     if (end !== undefined) {
-      updates.end = { dateTime: end, timeZone: timeZone || 'UTC' };
+      updates.end = { dateTime: end, timeZone: timeZone || 'CET' };
     }
     if (body !== undefined) {
       updates.body = { contentType: 'Text', content: body };
@@ -1036,7 +1036,7 @@ After finding times, use create-calendar-event to book the meeting.`,
         },
         timeZone: {
           type: 'string',
-          description: 'Time zone (default: UTC)',
+          description: 'Time zone (default: CET)',
         },
         body: {
           type: 'string',
@@ -1113,7 +1113,7 @@ This is the safer option for LLM agents - create drafts and let users review bef
         },
         timeZone: {
           type: 'string',
-          description: 'Time zone (default: UTC)',
+          description: 'Time zone (default: CET)',
         },
         body: {
           type: 'string',
