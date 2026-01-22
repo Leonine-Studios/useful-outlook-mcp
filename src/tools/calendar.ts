@@ -841,12 +841,12 @@ After finding times, use create-calendar-event to book the meeting.`,
           items: {
             type: 'object',
             properties: {
-              email: { type: 'string', description: 'Attendee email address (if you only have a name, use search-mail with query parameter to find their email first)' },
+              email: { type: 'string', description: 'Attendee email address (e.g., "john@company.com"). If you only have a name, use search-mail to find their email first.' },
               type: { type: 'string', enum: ['required', 'optional'], description: 'required = must attend, optional = nice to have' },
             },
             required: ['email'],
           },
-          description: 'List of attendees with their email and type (required/optional). If you only have names, use search-mail with query parameter (e.g., {"query": "Jane Smith"}) to find their emails first.',
+          description: 'List of attendees. Use simplified format: [{"email": "john@company.com", "type": "required"}]. Do NOT use Graph API format like emailAddress.address. If you only have names, use search-mail to find emails first.',
         },
         durationMinutes: {
           type: 'number',
@@ -984,6 +984,18 @@ After finding times, use create-calendar-event to book the meeting.`,
           type: 'string',
           description: 'Calendar ID (default: primary calendar)',
         },
+        attendees: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              email: { type: 'string', description: 'Attendee email address (e.g., "john@company.com")' },
+              type: { type: 'string', enum: ['required', 'optional'], description: 'Attendance type (default: required)' },
+            },
+            required: ['email'],
+          },
+          description: 'List of attendees to invite. Use simplified format: [{"email": "john@company.com", "type": "required"}].',
+        },
       },
       required: ['subject', 'start', 'end'],
     },
@@ -1024,6 +1036,18 @@ After finding times, use create-calendar-event to book the meeting.`,
         location: {
           type: 'string',
           description: 'Location name',
+        },
+        attendees: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              email: { type: 'string', description: 'Attendee email address (e.g., "john@company.com")' },
+              type: { type: 'string', enum: ['required', 'optional'], description: 'Attendance type (default: required)' },
+            },
+            required: ['email'],
+          },
+          description: 'List of attendees (replaces existing). Use simplified format: [{"email": "john@company.com", "type": "required"}]. Do NOT use Graph API format like emailAddress.address.',
         },
       },
       required: ['eventId'],
