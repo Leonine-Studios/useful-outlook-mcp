@@ -877,7 +877,7 @@ Examples:
   },
   {
     name: 'send-mail',
-    description: 'Send an email message',
+    description: 'Send an email message immediately.',
     readOnly: false,
     requiredScopes: ['Mail.Send'],
     inputSchema: {
@@ -894,12 +894,22 @@ Examples:
         },
         body: {
           type: 'string',
-          description: 'Email body content',
+          description: `Email body content in HTML format (default) or plain text.
+
+FORMATTING GUIDELINES for professional emails (when bodyType is "html"):
+- Use semantic HTML: <p> for paragraphs, <ul>/<li> for bullet lists, <strong> for emphasis
+- Font: Let Outlook use its default (Aptos/Calibri 12pt) - don't override with custom styles
+- IMPORTANT: Newline characters (\\n) do NOT render in HTML - use <p> tags or <br> instead
+- For section headers: use <strong> on its own line (avoid <h1>/<h2> which render oversized)
+- Keep styling minimal - no custom margins, padding, or line-height
+- Don't wrap in <html><body> tags - Outlook adds these automatically
+
+For plain text with automatic line breaks, set bodyType to "text" instead.`,
         },
         bodyType: {
           type: 'string',
           enum: ['html', 'text'],
-          description: 'Body content type (default: html)',
+          description: 'Body content type. Use "html" (default) for formatted emails with structure. Use "text" for plain text where \\n line breaks work automatically.',
         },
         cc: {
           type: 'array',
@@ -982,12 +992,22 @@ Examples:
         },
         body: {
           type: 'string',
-          description: 'Email body content',
+          description: `Email body content in HTML format (default) or plain text.
+
+FORMATTING GUIDELINES for professional emails (when bodyType is "html"):
+- Use semantic HTML: <p> for paragraphs, <ul>/<li> for bullet lists, <strong> for emphasis
+- Font: Let Outlook use its default (Aptos/Calibri 12pt) - don't override with custom styles
+- IMPORTANT: Newline characters (\\n) do NOT render in HTML - use <p> tags or <br> instead
+- For section headers: use <strong> on its own line (avoid <h1>/<h2> which render oversized)
+- Keep styling minimal - no custom margins, padding, or line-height
+- Don't wrap in <html><body> tags - Outlook adds these automatically
+
+For plain text with automatic line breaks, set bodyType to "text" instead.`,
         },
         bodyType: {
           type: 'string',
           enum: ['html', 'text'],
-          description: 'Body content type (default: html)',
+          description: 'Body content type. Use "html" (default) for formatted emails with structure. Use "text" for plain text where \\n line breaks work automatically.',
         },
         cc: {
           type: 'array',
