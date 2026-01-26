@@ -385,14 +385,77 @@ async function searchMail(params: Record<string, unknown>) {
 }
 
 /**
+ * Strip HTML tags and decode entities for plain text extraction
+ */
+function stripHtml(html: string): string {
+  return html
+    // Remove style and script tags with content
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+    // Replace common block elements with newlines
+    .replace(/<\/?(p|div|br|hr|tr|li|h[1-6])[^>]*>/gi, '\n')
+    // Remove all remaining HTML tags
+    .replace(/<[^>]+>/g, '')
+    // Decode common HTML entities
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&rsquo;/gi, "'")
+    .replace(/&lsquo;/gi, "'")
+    .replace(/&rdquo;/gi, '"')
+    .replace(/&ldquo;/gi, '"')
+    .replace(/&bull;/gi, '•')
+    .replace(/&mdash;/gi, '—')
+    .replace(/&ndash;/gi, '–')
+    // Collapse multiple newlines
+    .replace(/\n{3,}/g, '\n\n')
+    // Trim whitespace from each line
+    .split('\n')
+    .map(line => line.trim())
+    .join('\n')
+    .trim();
+}
+
+/**
  * Get a single mail message by ID
+ * Always returns body as plain text to minimize context window usage
  */
 async function getMailMessage(params: Record<string, unknown>) {
   const { messageId } = getMailMessageSchema.parse(params);
   
   try {
-    const response = await graphRequest(`/me/messages/${messageId}`);
-    return handleGraphResponse(response);
+    const selectFields = 'id,subject,from,sender,toRecipients,ccRecipients,bccRecipients,replyTo,receivedDateTime,sentDateTime,isRead,isDraft,importance,hasAttachments,internetMessageId,conversationId,webLink,flag,body';
+    
+    const url = `/me/messages/${messageId}?$select=${encodeURIComponent(selectFields)}`;
+    
+    // Request plain text body from Graph API
+    const response = await graphRequest(url, {
+      headers: {
+        'Prefer': 'outlook.body-content-type="text"',
+      },
+    });
+    const result = handleGraphResponse(response);
+    
+    // If API returned HTML anyway (can happen), strip HTML client-side
+    if (result.content?.[0]?.type === 'text') {
+      try {
+        const data = JSON.parse(result.content[0].text);
+        if (data.body?.contentType?.toLowerCase() === 'html' && data.body?.content) {
+          data.body.content = stripHtml(data.body.content);
+          data.body.contentType = 'text';
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }],
+          };
+        }
+      } catch {
+        // If parsing fails, return original response
+      }
+    }
+    
+    return result;
   } catch (error) {
     return formatErrorResponse(error);
   }
@@ -860,7 +923,9 @@ Examples:
   },
   {
     name: 'get-mail-message',
-    description: 'Get a single mail message by its ID',
+    description: `Get full mail message content by ID. Returns body as plain text (HTML stripped) to minimize context window usage.
+
+Use list-mail-messages or search-mail first to find message IDs and preview content, then use this tool only when you need the full message body.`,
     readOnly: true,
     requiredScopes: ['Mail.Read'],
     inputSchema: {
