@@ -6,6 +6,61 @@ import { z } from 'zod';
 import { graphRequest, handleGraphResponse, formatErrorResponse } from '../graph/client.js';
 
 // ============================================================================
+// Day of Week Helper - Prevents LLM date calculation errors
+// ============================================================================
+
+const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+/**
+ * Get day of week from an ISO 8601 date string
+ */
+function getDayOfWeek(dateTimeStr: string): { day: string; date: string } | null {
+  if (!dateTimeStr) return null;
+  
+  // Parse the date - handle both "2026-01-29T08:00:00.0000000" and "2026-01-29T08:00:00Z"
+  const dateMatch = dateTimeStr.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (!dateMatch) return null;
+  
+  const datePart = dateMatch[1];
+  const date = new Date(datePart + 'T12:00:00Z'); // Use noon UTC to avoid timezone edge cases
+  
+  if (isNaN(date.getTime())) return null;
+  
+  const dayIndex = date.getUTCDay();
+  return {
+    day: DAYS[dayIndex],
+    date: datePart,
+  };
+}
+
+/**
+ * Enrich a calendar event with day of week information
+ * Adds _dayInfo field to help LLMs avoid date calculation errors
+ */
+function enrichEventWithDayInfo(event: Record<string, unknown>): Record<string, unknown> {
+  const start = event.start as { dateTime?: string } | undefined;
+  const end = event.end as { dateTime?: string } | undefined;
+  
+  const startDayInfo = start?.dateTime ? getDayOfWeek(start.dateTime) : null;
+  const endDayInfo = end?.dateTime ? getDayOfWeek(end.dateTime) : null;
+  
+  return {
+    ...event,
+    _dayInfo: {
+      start: startDayInfo,
+      end: endDayInfo,
+    },
+  };
+}
+
+/**
+ * Enrich an array of calendar events with day of week information
+ */
+function enrichEventsWithDayInfo(events: unknown[]): unknown[] {
+  return events.map(event => enrichEventWithDayInfo(event as Record<string, unknown>));
+}
+
+// ============================================================================
 // Schemas
 // ============================================================================
 
@@ -152,6 +207,13 @@ async function listCalendarEvents(params: Record<string, unknown>) {
       
       const url = `${endpoint}?${queryParams.toString()}`;
       const response = await graphRequest<{ value: unknown[] }>(url);
+      
+      // Enrich events with day of week info
+      const data = response.data as { value?: unknown[] } | undefined;
+      if (data?.value) {
+        data.value = enrichEventsWithDayInfo(data.value);
+      }
+      
       return handleGraphResponse(response);
     }
     
@@ -170,6 +232,13 @@ async function listCalendarEvents(params: Record<string, unknown>) {
     const url = `${endpoint}?${queryParams.toString()}`;
     
     const response = await graphRequest<{ value: unknown[] }>(url);
+    
+    // Enrich events with day of week info
+    const data = response.data as { value?: unknown[] } | undefined;
+    if (data?.value) {
+      data.value = enrichEventsWithDayInfo(data.value);
+    }
+    
     return handleGraphResponse(response);
   } catch (error) {
     return formatErrorResponse(error);
@@ -307,6 +376,9 @@ async function searchCalendarEvents(params: Record<string, unknown>) {
         });
       }
       
+      // Enrich events with day of week info
+      events = enrichEventsWithDayInfo(events);
+      
       return {
         content: [{
           type: 'text' as const,
@@ -351,6 +423,9 @@ async function searchCalendarEvents(params: Record<string, unknown>) {
         );
       });
     }
+    
+    // Enrich events with day of week info
+    events = enrichEventsWithDayInfo(events);
     
     return {
       content: [{
@@ -463,16 +538,31 @@ async function findMeetingTimes(params: Record<string, unknown>) {
         // Limit to requested maxSuggestions
         const limitedSuggestions = filteredSuggestions.slice(0, maxSuggestions || 10);
         
+        // Enrich suggestions with day of week info
+        const enrichedSuggestions = limitedSuggestions.map(suggestion => {
+          const startTime = suggestion.meetingTimeSlot?.start?.dateTime;
+          const endTime = suggestion.meetingTimeSlot?.end?.dateTime;
+          const startDayInfo = startTime ? getDayOfWeek(startTime) : null;
+          const endDayInfo = endTime ? getDayOfWeek(endTime) : null;
+          return {
+            ...suggestion,
+            _dayInfo: {
+              start: startDayInfo,
+              end: endDayInfo,
+            },
+          };
+        });
+        
         // Return filtered response
         return {
           content: [{
             type: 'text' as const,
             text: JSON.stringify({
               ...data,
-              meetingTimeSuggestions: limitedSuggestions,
+              meetingTimeSuggestions: enrichedSuggestions,
               _filteredByMeetingHours: {
                 original: data.meetingTimeSuggestions.length,
-                filtered: limitedSuggestions.length,
+                filtered: enrichedSuggestions.length,
                 meetingHoursStart,
                 meetingHoursEnd,
               },
@@ -480,6 +570,32 @@ async function findMeetingTimes(params: Record<string, unknown>) {
           }],
         };
       }
+    }
+    
+    // Enrich unfiltered suggestions with day info too
+    const data = response.data as {
+      meetingTimeSuggestions?: Array<{
+        meetingTimeSlot?: {
+          start?: { dateTime?: string };
+          end?: { dateTime?: string };
+        };
+      }>;
+    } | undefined;
+    
+    if (data?.meetingTimeSuggestions) {
+      data.meetingTimeSuggestions = data.meetingTimeSuggestions.map(suggestion => {
+        const startTime = suggestion.meetingTimeSlot?.start?.dateTime;
+        const endTime = suggestion.meetingTimeSlot?.end?.dateTime;
+        const startDayInfo = startTime ? getDayOfWeek(startTime) : null;
+        const endDayInfo = endTime ? getDayOfWeek(endTime) : null;
+        return {
+          ...suggestion,
+          _dayInfo: {
+            start: startDayInfo,
+            end: endDayInfo,
+          },
+        };
+      }) as typeof data.meetingTimeSuggestions;
     }
     
     return handleGraphResponse(response);
@@ -496,6 +612,12 @@ async function getCalendarEvent(params: Record<string, unknown>) {
   
   try {
     const response = await graphRequest(`/me/events/${eventId}`);
+    
+    // Enrich event with day of week info
+    if (response.data) {
+      response.data = enrichEventWithDayInfo(response.data as Record<string, unknown>);
+    }
+    
     return handleGraphResponse(response);
   } catch (error) {
     return formatErrorResponse(error);
@@ -522,6 +644,13 @@ async function getCalendarView(params: Record<string, unknown>) {
     const url = `${endpoint}?${queryParams.toString()}`;
     
     const response = await graphRequest<{ value: unknown[] }>(url);
+    
+    // Enrich events with day of week info
+    const data = response.data as { value?: unknown[] } | undefined;
+    if (data?.value) {
+      data.value = enrichEventsWithDayInfo(data.value);
+    }
+    
     return handleGraphResponse(response);
   } catch (error) {
     return formatErrorResponse(error);
