@@ -8,6 +8,7 @@
 import { getContextToken } from '../utils/context.js';
 import logger from '../utils/logger.js';
 import { GRAPH_API_BASE } from '../config.js';
+import { serializeResponse } from '../utils/tonl.js';
 
 export interface GraphRequestOptions {
   method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
@@ -106,7 +107,7 @@ export function formatToolResponse(data: unknown): {
   return {
     content: [{
       type: 'text',
-      text: JSON.stringify(data, null, 2),
+      text: serializeResponse(data),
     }],
   };
 }
@@ -123,7 +124,7 @@ export function formatErrorResponse(error: unknown): {
   return {
     content: [{
       type: 'text',
-      text: JSON.stringify({ error: message }),
+      text: serializeResponse({ error: message }),
     }],
     isError: true,
   };

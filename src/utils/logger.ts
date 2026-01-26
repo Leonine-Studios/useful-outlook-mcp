@@ -80,6 +80,7 @@ export interface StartupConfig {
   rateLimitWindowMs: number;
   allowedTenants: string | number;
   readOnlyMode: boolean;
+  useTonl: boolean;
 }
 
 /**
@@ -109,6 +110,7 @@ export function printStartupBanner(config: StartupConfig): void {
   // Tools info
   console.log(`${white}${bold}  Tools${reset}`);
   console.log(`${gray}  ├─${reset} Mode:       ${config.readOnlyMode ? `${yellow}read-only${reset}` : `${green}read-write${reset}`}`);
+  console.log(`${gray}  ├─${reset} Output:     ${config.useTonl ? `${magenta}TONL${reset} ${dim}(token-optimized)${reset}` : `${white}JSON${reset}`}`);
   console.log(`${gray}  ├─${reset} Count:      ${green}${config.enabledTools.length}${reset}${dim}/${config.totalTools}${reset}`);
   console.log(`${gray}  └─${reset} Enabled:    ${dim}${config.enabledTools.join(', ')}${reset}`);
   console.log();

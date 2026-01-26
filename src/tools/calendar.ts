@@ -4,6 +4,7 @@
 
 import { z } from 'zod';
 import { graphRequest, handleGraphResponse, formatErrorResponse } from '../graph/client.js';
+import { serializeResponse } from '../utils/tonl.js';
 
 // ============================================================================
 // Day of Week Helper - Prevents LLM date calculation errors
@@ -382,7 +383,7 @@ async function searchCalendarEvents(params: Record<string, unknown>) {
       return {
         content: [{
           type: 'text' as const,
-          text: JSON.stringify({ value: events }, null, 2),
+          text: serializeResponse({ value: events }),
         }],
       };
     }
@@ -430,7 +431,7 @@ async function searchCalendarEvents(params: Record<string, unknown>) {
     return {
       content: [{
         type: 'text' as const,
-        text: JSON.stringify({ value: events }, null, 2),
+        text: serializeResponse({ value: events }),
       }],
     };
   } catch (error) {
@@ -557,7 +558,7 @@ async function findMeetingTimes(params: Record<string, unknown>) {
         return {
           content: [{
             type: 'text' as const,
-            text: JSON.stringify({
+            text: serializeResponse({
               ...data,
               meetingTimeSuggestions: enrichedSuggestions,
               _filteredByMeetingHours: {
@@ -566,7 +567,7 @@ async function findMeetingTimes(params: Record<string, unknown>) {
                 meetingHoursStart,
                 meetingHoursEnd,
               },
-            }, null, 2),
+            }),
           }],
         };
       }
@@ -835,7 +836,7 @@ async function deleteCalendarEvent(params: Record<string, unknown>) {
       return {
         content: [{
           type: 'text' as const,
-          text: JSON.stringify({ success: true, message: 'Event deleted' }),
+          text: serializeResponse({ success: true, message: 'Event deleted' }),
         }],
       };
     }

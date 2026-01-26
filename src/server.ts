@@ -178,6 +178,7 @@ export async function startServer(): Promise<void> {
       rateLimitWindowMs: config.rateLimitWindowMs,
       allowedTenants: config.allowedTenants.length > 0 ? config.allowedTenants.length : 'all',
       readOnlyMode: config.readOnlyMode,
+      useTonl: config.useTonl,
     });
   });
 }

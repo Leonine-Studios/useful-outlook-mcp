@@ -5,6 +5,7 @@
 import { z } from 'zod';
 import { graphRequest, handleGraphResponse, formatErrorResponse } from '../graph/client.js';
 import logger from '../utils/logger.js';
+import { serializeResponse } from '../utils/tonl.js';
 
 // ============================================================================
 // Schemas
@@ -347,7 +348,7 @@ async function searchMail(params: Record<string, unknown>) {
           const parsed = JSON.parse(result.content[0].text);
           parsed._warning = 'Full-text search (body, attachment, to, cc, bcc, participants) is not supported when searching within a specific folder. Only from, subject, hasAttachments, importance, and received filters were applied.';
           return {
-            content: [{ type: 'text' as const, text: JSON.stringify(parsed, null, 2) }],
+            content: [{ type: 'text' as const, text: serializeResponse(parsed) }],
           };
         }
       }
@@ -447,7 +448,7 @@ async function getMailMessage(params: Record<string, unknown>) {
           data.body.content = stripHtml(data.body.content);
           data.body.contentType = 'text';
           return {
-            content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }],
+            content: [{ type: 'text' as const, text: serializeResponse(data) }],
           };
         }
       } catch {
@@ -504,7 +505,7 @@ async function sendMail(params: Record<string, unknown>) {
       return {
         content: [{
           type: 'text' as const,
-          text: JSON.stringify({ success: true, message: 'Email sent successfully' }),
+          text: serializeResponse({ success: true, message: 'Email sent successfully' }),
         }],
       };
     }
@@ -530,7 +531,7 @@ async function deleteMailMessage(params: Record<string, unknown>) {
       return {
         content: [{
           type: 'text' as const,
-          text: JSON.stringify({ success: true, message: 'Message deleted' }),
+          text: serializeResponse({ success: true, message: 'Message deleted' }),
         }],
       };
     }
@@ -630,7 +631,7 @@ async function replyMail(params: Record<string, unknown>) {
       return {
         content: [{
           type: 'text' as const,
-          text: JSON.stringify({ success: true, message: 'Reply sent successfully' }),
+          text: serializeResponse({ success: true, message: 'Reply sent successfully' }),
         }],
       };
     }
@@ -659,7 +660,7 @@ async function replyAllMail(params: Record<string, unknown>) {
       return {
         content: [{
           type: 'text' as const,
-          text: JSON.stringify({ success: true, message: 'Reply-all sent successfully' }),
+          text: serializeResponse({ success: true, message: 'Reply-all sent successfully' }),
         }],
       };
     }

@@ -27,6 +27,8 @@ export interface Config {
   readOnlyMode: boolean;
   /** Enabled tools: comma-separated list of tool names (empty = all tools) */
   enabledTools: string[];
+  /** Use TONL encoding for responses (default: true) */
+  useTonl: boolean;
 }
 
 let cachedConfig: Config | null = null;
@@ -72,6 +74,7 @@ export function getConfig(): Config {
     allowedTenants,
     readOnlyMode: process.env.MS365_MCP_READ_ONLY_MODE === 'true',
     enabledTools,
+    useTonl: process.env.MS365_MCP_USE_TONL !== 'false', // default true
   };
 
   return cachedConfig;
