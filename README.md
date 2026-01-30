@@ -28,7 +28,7 @@ MS365_MCP_TENANT_ID=your-tenant-id  # or 'common'
 ## Azure AD Setup
 
 1. [Azure Portal](https://portal.azure.com) → Microsoft Entra ID → App registrations → New
-2. Add delegated permissions: `User.Read`, `Mail.Read`, `Mail.ReadWrite`, `Mail.Send`, `Calendars.Read`, `Calendars.ReadWrite`, `Calendars.Read.Shared`, `offline_access`
+2. Add delegated permissions: `User.Read`, `Mail.Read`, `Mail.ReadWrite`, `Mail.Send`, `Calendars.Read`, `Calendars.ReadWrite`, `Calendars.Read.Shared`, `Place.Read.All`, `offline_access`
 3. Add redirect URI: `http://localhost:6274/oauth/callback` (for MCP Inspector)
 4. Certificates & secrets → New client secret → Copy the value
 5. Copy Client ID, Client Secret, and Tenant ID to your `.env`
@@ -40,6 +40,18 @@ MS365_MCP_TENANT_ID=your-tenant-id  # or 'common'
 
 ### Calendar
 `list-calendars` · `list-calendar-events` · `search-calendar-events` · `find-meeting-times` · `get-calendar-event` · `get-calendar-view` · `create-calendar-event` · `update-calendar-event` · `delete-calendar-event`
+
+## Room Search
+
+For in-person meetings, `find-meeting-times` automatically:
+- Fetches all available meeting rooms across your organization
+- Includes them in availability checks alongside attendees
+- Groups free rooms by location (city/building)
+- Returns only available rooms with email addresses for booking
+
+Set `isOnlineMeeting: false` to enable room search. For online meetings (default: `true`), Teams meeting links are automatically generated.
+
+**Required scope**: `Place.Read.All` (add to Azure AD app permissions)
 
 ## Configuration
 
