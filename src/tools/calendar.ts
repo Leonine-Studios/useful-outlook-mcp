@@ -62,6 +62,118 @@ function enrichEventsWithDayInfo(events: unknown[]): unknown[] {
 }
 
 // ============================================================================
+// Room Management
+// ============================================================================
+
+/**
+ * Fetch all rooms from Microsoft Graph API
+ * Returns minimal room data to reduce token usage
+ */
+async function fetchAllRooms(): Promise<Array<{
+  displayName: string;
+  emailAddress: string;
+  building?: string;
+  city?: string;
+}>> {
+  try {
+    // Fetch rooms using /places endpoint
+    const response = await graphRequest<{ value: unknown[] }>('/places/microsoft.graph.room');
+    const rooms = (response.data as { value: unknown[] })?.value || [];
+    
+    // Extract only essential fields
+    return rooms.map((room: unknown) => {
+      const r = room as {
+        displayName?: string;
+        emailAddress?: string;
+        building?: string;
+        address?: { city?: string };
+      };
+      
+      return {
+        displayName: r.displayName || 'Unknown Room',
+        emailAddress: r.emailAddress || '',
+        building: r.building,
+        city: r.address?.city,
+      };
+    }).filter(r => r.emailAddress); // Only include rooms with email
+  } catch (error) {
+    // If room fetch fails, return empty array (graceful degradation)
+    return [];
+  }
+}
+
+/**
+ * Process findMeetingTimes response to reduce token usage
+ * - Filters out busy attendees (keeps only free/tentative)
+ * - Groups free rooms by location with limited examples
+ * - Includes email addresses for booking
+ */
+function optimizeMeetingTimesResponse(
+  suggestions: Array<Record<string, unknown>>,
+  roomMetadata: Array<{ emailAddress: string; displayName: string; building?: string; city?: string }>
+): Array<Record<string, unknown>> {
+  // Create room lookup map
+  const roomMap = new Map(
+    roomMetadata.map(r => [r.emailAddress.toLowerCase(), r])
+  );
+  
+  const MAX_ROOM_EXAMPLES = 5; // Limit examples per location
+  
+  return suggestions.map(suggestion => {
+    const attendeeAvail = (suggestion.attendeeAvailability as Array<Record<string, unknown>>) || [];
+    
+    // Filter to only free/tentative attendees
+    const availableAttendees = attendeeAvail.filter(a => {
+      const availability = (a.availability as string) || '';
+      return availability === 'free' || availability === 'tentative';
+    });
+    
+    // Group free rooms by location with email addresses
+    const roomsByLocation: Record<string, Array<{ name: string; email: string }>> = {};
+    const nonRoomAttendees: Array<Record<string, unknown>> = [];
+    
+    for (const attendee of availableAttendees) {
+      const email = ((attendee.attendee as Record<string, unknown>)?.emailAddress as Record<string, unknown>)?.address as string;
+      const emailLower = email?.toLowerCase() || '';
+      const room = roomMap.get(emailLower);
+      
+      if (room) {
+        // This is a room - group by location
+        const location = room.city || room.building || 'Unknown';
+        if (!roomsByLocation[location]) {
+          roomsByLocation[location] = [];
+        }
+        roomsByLocation[location].push({
+          name: room.displayName || email,
+          email: room.emailAddress,
+        });
+      } else {
+        // This is a person - keep as-is
+        nonRoomAttendees.push(attendee);
+      }
+    }
+    
+    // Build final room structure with counts and limited examples
+    const freeRoomsByLocation: Record<string, { count: number; rooms: Array<{ name: string; email: string }> }> = {};
+    for (const [location, rooms] of Object.entries(roomsByLocation)) {
+      freeRoomsByLocation[location] = {
+        count: rooms.length,
+        rooms: rooms.slice(0, MAX_ROOM_EXAMPLES), // Limit to 5 examples
+      };
+    }
+    
+    // Build minimal suggestion object - remove redundant fields
+    return {
+      meetingTimeSlot: suggestion.meetingTimeSlot,
+      _dayInfo: suggestion._dayInfo,
+      _freeRoomsByLocation: freeRoomsByLocation,
+      attendeeAvailability: nonRoomAttendees,
+      // Remove: confidence, suggestionReason, locations, organizerAvailability
+    };
+  });
+}
+
+// ============================================================================
 // Schemas
 // ============================================================================
 
@@ -89,7 +201,7 @@ const searchCalendarEventsSchema = z.object({
 const findMeetingTimesSchema = z.object({
   attendees: z.array(z.object({
     email: z.string(),
-    type: z.enum(['required', 'optional']).optional().default('required'),
+    type: z.enum(['required', 'optional', 'resource']).optional().default('required'),
   })).min(1),
   durationMinutes: z.number().min(15).max(480).default(60),
   searchWindowStart: z.string(),
@@ -126,6 +238,7 @@ const createCalendarEventSchema = z.object({
     type: z.enum(['required', 'optional']).optional().default('required'),
   })).optional(),
   isAllDay: z.boolean().optional().default(false),
+  isOnlineMeeting: z.boolean().optional().default(true),
   reminderMinutesBeforeStart: z.number().optional(),
   calendarId: z.string().optional(),
 });
@@ -143,6 +256,7 @@ const createDraftCalendarEventSchema = z.object({
     type: z.enum(['required', 'optional']).optional().default('required'),
   })).optional(),
   isAllDay: z.boolean().optional().default(false),
+  isOnlineMeeting: z.boolean().optional().default(true),
   reminderMinutesBeforeStart: z.number().optional(),
   calendarId: z.string().optional(),
 });
@@ -465,7 +579,25 @@ function isWithinMeetingHours(
  */
 async function findMeetingTimes(params: Record<string, unknown>) {
   const parsed = findMeetingTimesSchema.parse(params);
-  const { attendees, durationMinutes, searchWindowStart, searchWindowEnd, meetingHoursStart, meetingHoursEnd, isOnlineMeeting, isOrganizerOptional, maxSuggestions, timeZone } = parsed;
+  let { attendees, durationMinutes, searchWindowStart, searchWindowEnd, meetingHoursStart, meetingHoursEnd, isOnlineMeeting, isOrganizerOptional, maxSuggestions, timeZone } = parsed;
+  
+  // Auto-fetch rooms for in-person meetings
+  let roomMetadata: Array<{ emailAddress: string; displayName: string; building?: string; city?: string }> = [];
+  if (isOnlineMeeting === false) {
+    const rooms = await fetchAllRooms();
+    
+    // Store room metadata for later response processing
+    roomMetadata = rooms;
+    
+    // Add rooms as resource attendees
+    const roomAttendees = rooms.map(room => ({
+      email: room.emailAddress,
+      type: 'resource' as const,
+    }));
+    
+    // Merge with existing attendees
+    attendees = [...attendees, ...roomAttendees];
+  }
   
   try {
     // Build the request body for findMeetingTimes
@@ -539,10 +671,16 @@ async function findMeetingTimes(params: Record<string, unknown>) {
         // Limit to requested maxSuggestions
         const limitedSuggestions = filteredSuggestions.slice(0, maxSuggestions || 10);
         
+        // Optimize response: filter busy attendees and group rooms by location
+        const optimizedSuggestions = isOnlineMeeting === false 
+          ? optimizeMeetingTimesResponse(limitedSuggestions, roomMetadata)
+          : limitedSuggestions;
+        
         // Enrich suggestions with day of week info
-        const enrichedSuggestions = limitedSuggestions.map(suggestion => {
-          const startTime = suggestion.meetingTimeSlot?.start?.dateTime;
-          const endTime = suggestion.meetingTimeSlot?.end?.dateTime;
+        const enrichedSuggestions = optimizedSuggestions.map(suggestion => {
+          const timeSlot = suggestion.meetingTimeSlot as { start?: { dateTime?: string }; end?: { dateTime?: string } } | undefined;
+          const startTime = timeSlot?.start?.dateTime;
+          const endTime = timeSlot?.end?.dateTime;
           const startDayInfo = startTime ? getDayOfWeek(startTime) : null;
           const endDayInfo = endTime ? getDayOfWeek(endTime) : null;
           return {
@@ -584,9 +722,15 @@ async function findMeetingTimes(params: Record<string, unknown>) {
     } | undefined;
     
     if (data?.meetingTimeSuggestions) {
-      data.meetingTimeSuggestions = data.meetingTimeSuggestions.map(suggestion => {
-        const startTime = suggestion.meetingTimeSlot?.start?.dateTime;
-        const endTime = suggestion.meetingTimeSlot?.end?.dateTime;
+      // Optimize response: filter busy attendees and group rooms by location
+      const optimizedSuggestions = isOnlineMeeting === false
+        ? optimizeMeetingTimesResponse(data.meetingTimeSuggestions, roomMetadata)
+        : data.meetingTimeSuggestions;
+      
+      data.meetingTimeSuggestions = optimizedSuggestions.map(suggestion => {
+        const timeSlot = suggestion.meetingTimeSlot as { start?: { dateTime?: string }; end?: { dateTime?: string } } | undefined;
+        const startTime = timeSlot?.start?.dateTime;
+        const endTime = timeSlot?.end?.dateTime;
         const startDayInfo = startTime ? getDayOfWeek(startTime) : null;
         const endDayInfo = endTime ? getDayOfWeek(endTime) : null;
         return {
@@ -664,7 +808,7 @@ async function getCalendarView(params: Record<string, unknown>) {
 async function createCalendarEvent(params: Record<string, unknown>) {
   const { 
     subject, start, end, timeZone, body, bodyType, 
-    location, attendees, isAllDay, reminderMinutesBeforeStart, calendarId 
+    location, attendees, isAllDay, isOnlineMeeting, reminderMinutesBeforeStart, calendarId 
   } = createCalendarEventSchema.parse(params);
   
   try {
@@ -680,6 +824,10 @@ async function createCalendarEvent(params: Record<string, unknown>) {
       },
       isAllDay,
     };
+    
+    if (isOnlineMeeting) {
+      event.isOnlineMeeting = true;
+    }
     
     if (body) {
       event.body = {
@@ -725,7 +873,7 @@ async function createCalendarEvent(params: Record<string, unknown>) {
 async function createDraftCalendarEvent(params: Record<string, unknown>) {
   const { 
     subject, start, end, timeZone, body, bodyType, 
-    location, attendees, isAllDay, reminderMinutesBeforeStart, calendarId 
+    location, attendees, isAllDay, isOnlineMeeting, reminderMinutesBeforeStart, calendarId 
   } = createDraftCalendarEventSchema.parse(params);
   
   try {
@@ -742,6 +890,10 @@ async function createDraftCalendarEvent(params: Record<string, unknown>) {
       isAllDay,
       isDraft: true,
     };
+    
+    if (isOnlineMeeting) {
+      event.isOnlineMeeting = true;
+    }
     
     if (body) {
       event.body = {
@@ -975,6 +1127,12 @@ Examples:
     name: 'find-meeting-times',
     description: `Find available meeting times when attendees are free. Checks everyone's free/busy status and returns ranked suggestions.
 
+AUTOMATIC ROOM LOOKUP (when isOnlineMeeting=false):
+- System automatically fetches all available rooms
+- Includes rooms as resource attendees in availability check
+- Results show which rooms are free for each time slot
+- No need to manually specify rooms!
+
 EMAIL ADDRESSES REQUIRED:
 - If user provides names: First use search-mail with {"query": "Jane Smith", "top": 5} to find emails, extract from results, then call this tool
 - DO NOT ask user for emails - look them up yourself
@@ -988,11 +1146,13 @@ ORGANIZER AVAILABILITY (critical):
 
 Parameters:
 - meetingHoursStart/End: Limit to specific hours (e.g., "09:00:00" to "17:00:00")
+- isOnlineMeeting: true (default, Teams meeting), false (in-person with automatic room lookup)
 - Returns: confidence score, attendee availability, suggestion reasons
 
 Examples:
 - 1-hour, 9-11am: {"attendees": [{"email": "alice@company.com", "type": "required"}], "durationMinutes": 60, "searchWindowStart": "2026-01-20T00:00:00", "searchWindowEnd": "2026-02-03T23:59:59", "meetingHoursStart": "09:00:00", "meetingHoursEnd": "11:00:00"}
 - 30-min Teams: {"attendees": [{"email": "alice@company.com"}, {"email": "bob@company.com"}], "durationMinutes": 30, "searchWindowStart": "2026-01-20T00:00:00", "searchWindowEnd": "2026-01-24T23:59:59", "isOnlineMeeting": true}
+- In-person: {"attendees": [{"email": "alice@company.com"}], "durationMinutes": 60, "searchWindowStart": "2026-01-20T00:00:00", "searchWindowEnd": "2026-01-24T23:59:59", "isOnlineMeeting": false}
 
 After finding times, use create-calendar-event to book.`,
     readOnly: true,
@@ -1101,7 +1261,15 @@ After finding times, use create-calendar-event to book.`,
   },
   {
     name: 'create-calendar-event',
-    description: 'Create a new calendar event',
+    description: `Create a new calendar event.
+
+TEAMS MEETINGS:
+- Set isOnlineMeeting=true (default) to auto-generate Teams meeting link
+- Link appears in onlineMeetingUrl field and is included in invitations
+
+IN-PERSON MEETINGS:
+- Set isOnlineMeeting=false for physical meetings
+- Set location field to room name/address`,
     readOnly: false,
     requiredScopes: ['Calendars.ReadWrite'],
     inputSchema: {
@@ -1169,6 +1337,14 @@ After finding times, use create-calendar-event to book.`,
     name: 'create-draft-calendar-event',
     description: `Create a calendar event draft without sending invitations. Event is saved to calendar but attendees NOT notified until user sends from Outlook.
 
+TEAMS MEETINGS:
+- Set isOnlineMeeting=true (default) to auto-generate Teams meeting link
+- Link appears in onlineMeetingUrl field and is included in invitations
+
+IN-PERSON MEETINGS:
+- Set isOnlineMeeting=false for physical meetings
+- Set location field to room name/address
+
 Use this to prepare meetings for user review before sending invitations. Safer than create-calendar-event (which sends immediately).
 
 Draft event appears with "[Draft]" indicator. User can send from Outlook or you can use update-calendar-event to modify.`,
@@ -1209,6 +1385,10 @@ Draft event appears with "[Draft]" indicator. User can send from Outlook or you 
         isAllDay: {
           type: 'boolean',
           description: 'Is this an all-day event',
+        },
+        isOnlineMeeting: {
+          type: 'boolean',
+          description: 'Create as Teams/online meeting (auto-generates meeting link). Default: true',
         },
         reminderMinutesBeforeStart: {
           type: 'number',

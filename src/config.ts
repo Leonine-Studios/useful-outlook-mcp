@@ -107,6 +107,8 @@ export const SUPPORTED_SCOPES = [
   'Mail.Send',
   'Calendars.Read',
   'Calendars.ReadWrite',
+  'Calendars.Read.Shared',
+  'Place.Read.All',
   'offline_access',
   'User.Read',
 ] as const;
