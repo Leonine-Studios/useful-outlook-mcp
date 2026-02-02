@@ -96,6 +96,9 @@ export function createApp() {
   // Create rate limit middleware instance
   const rateLimit = rateLimitMiddleware();
   
+  // Keep-alive interval for SSE connections (30 seconds, well under 60s timeout)
+  const KEEP_ALIVE_INTERVAL_MS = 30000;
+  
   // MCP endpoint - requires authentication and rate limiting
   const handleMcpRequest = async (req: AuthenticatedRequest, res: Response) => {
     if (!req.auth?.token) {
@@ -118,8 +121,41 @@ export function createApp() {
           sessionIdGenerator: undefined, // Stateless mode
         });
         
+        // For GET requests (SSE streams), set up keep-alive to prevent client timeout
+        let keepAliveInterval: NodeJS.Timeout | undefined;
+        
+        if (req.method === 'GET') {
+          // Start keep-alive ping after headers are sent
+          // SSE comments (lines starting with :) are ignored by clients but keep the connection alive
+          keepAliveInterval = setInterval(() => {
+            if (!res.writableEnded && !res.destroyed) {
+              try {
+                res.write(': keepalive\n\n');
+              } catch {
+                // Connection may have closed, clear interval
+                if (keepAliveInterval) {
+                  clearInterval(keepAliveInterval);
+                }
+              }
+            } else {
+              if (keepAliveInterval) {
+                clearInterval(keepAliveInterval);
+              }
+            }
+          }, KEEP_ALIVE_INTERVAL_MS);
+        }
+        
         res.on('close', () => {
+          if (keepAliveInterval) {
+            clearInterval(keepAliveInterval);
+          }
           transport.close();
+        });
+        
+        res.on('error', () => {
+          if (keepAliveInterval) {
+            clearInterval(keepAliveInterval);
+          }
         });
         
         await mcpServer.connect(transport);
@@ -165,7 +201,7 @@ export async function startServer(): Promise<void> {
     .filter(t => !filteredTools.some(ft => ft.name === t.name))
     .map(t => t.name);
   
-  app.listen(config.port, config.host, () => {
+  const server = app.listen(config.port, config.host, () => {
     printStartupBanner({
       version: VERSION,
       host: config.host,
@@ -181,4 +217,10 @@ export async function startServer(): Promise<void> {
       useTonl: config.useTonl,
     });
   });
+  
+  // Disable timeouts for SSE/long-lived connections
+  // Default Node.js timeout can close idle SSE connections after 60s
+  server.timeout = 0; // Disable socket timeout
+  server.keepAliveTimeout = 0; // Disable keep-alive timeout
+  server.headersTimeout = 0; // Disable headers timeout
 }
