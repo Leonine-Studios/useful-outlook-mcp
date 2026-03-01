@@ -5,6 +5,7 @@
 import { z } from 'zod';
 import { graphRequest, handleGraphResponse, formatErrorResponse } from '../graph/client.js';
 import { serializeResponse } from '../utils/tonl.js';
+import { sanitizePathSegment, sanitizeODataString } from '../utils/sanitize.js';
 
 // ============================================================================
 // Day of Week Helper - Prevents LLM date calculation errors
@@ -317,7 +318,7 @@ async function listCalendarEvents(params: Record<string, unknown>) {
       queryParams.set('endDateTime', startBefore);
       
       const endpoint = calendarId 
-        ? `/me/calendars/${calendarId}/calendarView`
+        ? `/me/calendars/${sanitizePathSegment(calendarId, 'calendarId')}/calendarView`
         : '/me/calendarView';
       
       const url = `${endpoint}?${queryParams.toString()}`;
@@ -335,13 +336,13 @@ async function listCalendarEvents(params: Record<string, unknown>) {
     // Otherwise use events endpoint with filter
     if (startAfter || startBefore) {
       const filters: string[] = [];
-      if (startAfter) filters.push(`start/dateTime ge '${startAfter}'`);
-      if (startBefore) filters.push(`start/dateTime le '${startBefore}'`);
+      if (startAfter) filters.push(`start/dateTime ge '${sanitizeODataString(startAfter)}'`);
+      if (startBefore) filters.push(`start/dateTime le '${sanitizeODataString(startBefore)}'`);
       queryParams.set('$filter', filters.join(' and '));
     }
     
     const endpoint = calendarId 
-      ? `/me/calendars/${calendarId}/events`
+      ? `/me/calendars/${sanitizePathSegment(calendarId, 'calendarId')}/events`
       : '/me/events';
     
     const url = `${endpoint}?${queryParams.toString()}`;
@@ -412,21 +413,21 @@ function buildCalendarFilter(params: {
   const filters: string[] = [];
   
   if (params.subject) {
-    filters.push(`contains(subject, '${params.subject}')`);
+    filters.push(`contains(subject, '${sanitizeODataString(params.subject)}')`);
   }
   // organizerEmail is NOT included - Graph API doesn't support it (500 error)
   // It will be filtered client-side in searchCalendarEvents
   if (params.organizerName) {
-    filters.push(`contains(organizer/emailAddress/name, '${params.organizerName}')`);
+    filters.push(`contains(organizer/emailAddress/name, '${sanitizeODataString(params.organizerName)}')`);
   }
   if (params.isAllDay !== undefined) {
     filters.push(`isAllDay eq ${params.isAllDay}`);
   }
   if (params.startAfter) {
-    filters.push(`start/dateTime ge '${params.startAfter}'`);
+    filters.push(`start/dateTime ge '${sanitizeODataString(params.startAfter)}'`);
   }
   if (params.startBefore) {
-    filters.push(`start/dateTime le '${params.startBefore}'`);
+    filters.push(`start/dateTime le '${sanitizeODataString(params.startBefore)}'`);
   }
   
   return filters.length > 0 ? filters.join(' and ') : undefined;
@@ -763,7 +764,7 @@ async function getCalendarEvent(params: Record<string, unknown>) {
   const { eventId } = getCalendarEventSchema.parse(params);
   
   try {
-    const response = await graphRequest(`/me/events/${eventId}`);
+    const response = await graphRequest(`/me/events/${sanitizePathSegment(eventId, 'eventId')}`);
     
     // Enrich event with day of week info
     if (response.data) {
@@ -790,7 +791,7 @@ async function getCalendarView(params: Record<string, unknown>) {
     queryParams.set('$select', 'id,subject,start,end,location,organizer,attendees,isAllDay,isCancelled,bodyPreview');
     
     const endpoint = calendarId 
-      ? `/me/calendars/${calendarId}/calendarView`
+      ? `/me/calendars/${sanitizePathSegment(calendarId, 'calendarId')}/calendarView`
       : '/me/calendarView';
     
     const url = `${endpoint}?${queryParams.toString()}`;
@@ -860,7 +861,7 @@ async function createCalendarEvent(params: Record<string, unknown>) {
     }
     
     const endpoint = calendarId 
-      ? `/me/calendars/${calendarId}/events`
+      ? `/me/calendars/${sanitizePathSegment(calendarId, 'calendarId')}/events`
       : '/me/events';
     
     const response = await graphRequest(endpoint, {
@@ -926,7 +927,7 @@ async function createDraftCalendarEvent(params: Record<string, unknown>) {
     }
     
     const endpoint = calendarId 
-      ? `/me/calendars/${calendarId}/events`
+      ? `/me/calendars/${sanitizePathSegment(calendarId, 'calendarId')}/events`
       : '/me/events';
     
     const response = await graphRequest(endpoint, {
@@ -969,7 +970,7 @@ async function updateCalendarEvent(params: Record<string, unknown>) {
       }));
     }
     
-    const response = await graphRequest(`/me/events/${eventId}`, {
+    const response = await graphRequest(`/me/events/${sanitizePathSegment(eventId, 'eventId')}`, {
       method: 'PATCH',
       body: updates,
     });
@@ -987,7 +988,7 @@ async function deleteCalendarEvent(params: Record<string, unknown>) {
   const { eventId } = deleteCalendarEventSchema.parse(params);
   
   try {
-    const response = await graphRequest(`/me/events/${eventId}`, {
+    const response = await graphRequest(`/me/events/${sanitizePathSegment(eventId, 'eventId')}`, {
       method: 'DELETE',
     });
     

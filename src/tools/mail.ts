@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { graphRequest, handleGraphResponse, formatErrorResponse } from '../graph/client.js';
 import logger from '../utils/logger.js';
 import { serializeResponse } from '../utils/tonl.js';
+import { sanitizePathSegment, sanitizeODataString } from '../utils/sanitize.js';
 
 // ============================================================================
 // Schemas
@@ -104,7 +105,7 @@ async function listMailFolders(params: Record<string, unknown>) {
   try {
     // If parentFolderId is provided, list child folders; otherwise list top-level folders
     const endpoint = parentFolderId 
-      ? `/me/mailFolders/${parentFolderId}/childFolders`
+      ? `/me/mailFolders/${sanitizePathSegment(parentFolderId, 'parentFolderId')}/childFolders`
       : '/me/mailFolders';
     
     const response = await graphRequest<{ value: unknown[] }>(endpoint);
@@ -135,7 +136,7 @@ function buildMailFilter(params: {
     // Using startswith() instead of eq because Graph API's eq filter on 
     // from/emailAddress/address is unreliable and often returns 0 results
     // See: https://learn.microsoft.com/en-us/answers/questions/2153305/
-    filters.push(`startswith(from/emailAddress/address, '${params.senderEmail}')`);
+    filters.push(`startswith(from/emailAddress/address, '${sanitizeODataString(params.senderEmail)}')`);
   }
   if (params.receivedAfter) {
     filters.push(`receivedDateTime ge ${params.receivedAfter}`);
@@ -150,7 +151,7 @@ function buildMailFilter(params: {
     filters.push(`hasAttachments eq ${params.hasAttachments}`);
   }
   if (params.importance) {
-    filters.push(`importance eq '${params.importance}'`);
+    filters.push(`importance eq '${sanitizeODataString(params.importance)}'`);
   }
   
   return filters.length > 0 ? filters.join(' and ') : undefined;
@@ -190,7 +191,7 @@ async function listMailMessages(params: Record<string, unknown>) {
     queryParams.set('$select', 'id,subject,from,toRecipients,ccRecipients,receivedDateTime,isRead,importance,hasAttachments,bodyPreview');
     
     const endpoint = folderId 
-      ? `/me/mailFolders/${folderId}/messages`
+      ? `/me/mailFolders/${sanitizePathSegment(folderId, 'folderId')}/messages`
       : '/me/messages';
     
     const url = `${endpoint}?${queryParams.toString()}`;
@@ -357,10 +358,10 @@ async function searchMail(params: Record<string, unknown>) {
       // Note: Using startswith() instead of eq/contains because Graph API is unreliable with exact matches
       const filters: string[] = [];
       
-      if (from) filters.push(`startswith(from/emailAddress/address, '${from}')`);
-      if (subject) filters.push(`contains(subject, '${subject}')`);
+      if (from) filters.push(`startswith(from/emailAddress/address, '${sanitizeODataString(from)}')`);
+      if (subject) filters.push(`contains(subject, '${sanitizeODataString(subject)}')`);
       if (hasAttachments !== undefined) filters.push(`hasAttachments eq ${hasAttachments}`);
-      if (importance) filters.push(`importance eq '${importance}'`);
+      if (importance) filters.push(`importance eq '${sanitizeODataString(importance)}'`);
       if (received) {
         // Parse received format like ">=2026-01-06" 
         const match = received.match(/^(>=|<=|>|<|=)?(.+)$/);
@@ -376,7 +377,7 @@ async function searchMail(params: Record<string, unknown>) {
       if (top) queryParams.set('$top', String(top));
       queryParams.set('$select', 'id,subject,from,toRecipients,ccRecipients,receivedDateTime,isRead,importance,hasAttachments,bodyPreview');
       
-      const url = `/me/mailFolders/${folderId}/messages?${queryParams.toString()}`;
+      const url = `/me/mailFolders/${sanitizePathSegment(folderId, 'folderId')}/messages?${queryParams.toString()}`;
       
       const response = await graphRequest<{ value: unknown[] }>(url);
       
@@ -473,7 +474,7 @@ async function getMailMessage(params: Record<string, unknown>) {
     const bodyField = includeConversationHistory ? 'body' : 'uniqueBody';
     const selectFields = `id,subject,from,sender,toRecipients,ccRecipients,bccRecipients,replyTo,receivedDateTime,sentDateTime,isRead,isDraft,importance,hasAttachments,internetMessageId,conversationId,webLink,flag,${bodyField}`;
     
-    const url = `/me/messages/${messageId}?$select=${encodeURIComponent(selectFields)}`;
+    const url = `/me/messages/${sanitizePathSegment(messageId, 'messageId')}?$select=${encodeURIComponent(selectFields)}`;
     
     // Request plain text body from Graph API
     const response = await graphRequest(url, {
@@ -585,7 +586,7 @@ async function deleteMailMessage(params: Record<string, unknown>) {
   const { messageId } = deleteMailMessageSchema.parse(params);
   
   try {
-    const response = await graphRequest(`/me/messages/${messageId}`, {
+    const response = await graphRequest(`/me/messages/${sanitizePathSegment(messageId, 'messageId')}`, {
       method: 'DELETE',
     });
     
@@ -611,7 +612,7 @@ async function moveMailMessage(params: Record<string, unknown>) {
   const { messageId, destinationFolderId } = moveMailMessageSchema.parse(params);
   
   try {
-    const response = await graphRequest(`/me/messages/${messageId}/move`, {
+    const response = await graphRequest(`/me/messages/${sanitizePathSegment(messageId, 'messageId')}/move`, {
       method: 'POST',
       body: {
         destinationId: destinationFolderId,
@@ -682,7 +683,7 @@ async function replyMail(params: Record<string, unknown>) {
   const { messageId, comment } = replyMailSchema.parse(params);
   
   try {
-    const response = await graphRequest(`/me/messages/${messageId}/reply`, {
+    const response = await graphRequest(`/me/messages/${sanitizePathSegment(messageId, 'messageId')}/reply`, {
       method: 'POST',
       body: {
         comment,
@@ -711,7 +712,7 @@ async function replyAllMail(params: Record<string, unknown>) {
   const { messageId, comment } = replyMailSchema.parse(params);
   
   try {
-    const response = await graphRequest(`/me/messages/${messageId}/replyAll`, {
+    const response = await graphRequest(`/me/messages/${sanitizePathSegment(messageId, 'messageId')}/replyAll`, {
       method: 'POST',
       body: {
         comment,
@@ -745,7 +746,7 @@ async function createReplyDraft(params: Record<string, unknown>) {
       body.comment = comment;
     }
     
-    const response = await graphRequest(`/me/messages/${messageId}/createReply`, {
+    const response = await graphRequest(`/me/messages/${sanitizePathSegment(messageId, 'messageId')}/createReply`, {
       method: 'POST',
       body,
     });
@@ -768,7 +769,7 @@ async function createReplyAllDraft(params: Record<string, unknown>) {
       body.comment = comment;
     }
     
-    const response = await graphRequest(`/me/messages/${messageId}/createReplyAll`, {
+    const response = await graphRequest(`/me/messages/${sanitizePathSegment(messageId, 'messageId')}/createReplyAll`, {
       method: 'POST',
       body,
     });
