@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { graphRequest, handleGraphResponse, formatErrorResponse } from '../graph/client.js';
 import logger from '../utils/logger.js';
 import { serializeResponse } from '../utils/tonl.js';
-import { sanitizePathSegment, sanitizeODataString } from '../utils/sanitize.js';
+import { sanitizePathSegment, sanitizeODataString, sanitizeODataDatetime } from '../utils/sanitize.js';
 
 // ============================================================================
 // Schemas
@@ -139,10 +139,10 @@ function buildMailFilter(params: {
     filters.push(`startswith(from/emailAddress/address, '${sanitizeODataString(params.senderEmail)}')`);
   }
   if (params.receivedAfter) {
-    filters.push(`receivedDateTime ge ${params.receivedAfter}`);
+    filters.push(`receivedDateTime ge ${sanitizeODataDatetime(params.receivedAfter, 'receivedAfter')}`);
   }
   if (params.receivedBefore) {
-    filters.push(`receivedDateTime le ${params.receivedBefore}`);
+    filters.push(`receivedDateTime le ${sanitizeODataDatetime(params.receivedBefore, 'receivedBefore')}`);
   }
   if (params.isRead !== undefined) {
     filters.push(`isRead eq ${params.isRead}`);
@@ -368,7 +368,7 @@ async function searchMail(params: Record<string, unknown>) {
         if (match) {
           const [, op, date] = match;
           const operator = op === '>=' ? 'ge' : op === '<=' ? 'le' : op === '>' ? 'gt' : op === '<' ? 'lt' : 'eq';
-          filters.push(`receivedDateTime ${operator} ${date}`);
+          filters.push(`receivedDateTime ${operator} ${sanitizeODataDatetime(date, 'received')}`);
         }
       }
       

@@ -5,7 +5,7 @@
 import { z } from 'zod';
 import { graphRequest, handleGraphResponse, formatErrorResponse } from '../graph/client.js';
 import { serializeResponse } from '../utils/tonl.js';
-import { sanitizePathSegment, sanitizeODataString } from '../utils/sanitize.js';
+import { sanitizePathSegment, sanitizeODataString, sanitizeTimezone } from '../utils/sanitize.js';
 
 // ============================================================================
 // Day of Week Helper - Prevents LLM date calculation errors
@@ -645,7 +645,7 @@ async function findMeetingTimes(params: Record<string, unknown>) {
     const response = await graphRequest('/me/findMeetingTimes', {
       method: 'POST',
       body: requestBody,
-      headers: timeZone ? { 'Prefer': `outlook.timezone="${timeZone}"` } : undefined,
+      headers: timeZone ? { 'Prefer': `outlook.timezone="${sanitizeTimezone(timeZone)}"` } : undefined,
     });
     
     // Client-side filtering for meeting hours constraint
