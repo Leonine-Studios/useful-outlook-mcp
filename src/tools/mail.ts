@@ -80,12 +80,18 @@ const createDraftMailSchema = z.object({
 
 const replyMailSchema = z.object({
   messageId: z.string(),
-  comment: z.string(),
+  comment: z.string().optional(),
+  body: z.string().optional(),
+  bodyType: z.enum(['html', 'text']).optional().default('html'),
+}).refine(data => data.comment || data.body, {
+  message: 'Either comment or body must be provided',
 });
 
 const createReplyDraftSchema = z.object({
   messageId: z.string(),
   comment: z.string().optional(),
+  body: z.string().optional(),
+  bodyType: z.enum(['html', 'text']).optional().default('html'),
 });
 
 // ============================================================================
@@ -680,14 +686,24 @@ async function createDraftMail(params: Record<string, unknown>) {
  * Reply to a mail message (sends immediately)
  */
 async function replyMail(params: Record<string, unknown>) {
-  const { messageId, comment } = replyMailSchema.parse(params);
+  const { messageId, comment, body: replyBody, bodyType } = replyMailSchema.parse(params);
   
   try {
+    const requestBody: Record<string, unknown> = {};
+    if (replyBody) {
+      requestBody.message = {
+        body: {
+          contentType: bodyType === 'html' ? 'HTML' : 'Text',
+          content: replyBody,
+        },
+      };
+    } else if (comment) {
+      requestBody.comment = comment;
+    }
+    
     const response = await graphRequest(`/me/messages/${sanitizePathSegment(messageId, 'messageId')}/reply`, {
       method: 'POST',
-      body: {
-        comment,
-      },
+      body: requestBody,
     });
     
     if (response.status === 202 || response.ok) {
@@ -709,14 +725,24 @@ async function replyMail(params: Record<string, unknown>) {
  * Reply all to a mail message (sends immediately)
  */
 async function replyAllMail(params: Record<string, unknown>) {
-  const { messageId, comment } = replyMailSchema.parse(params);
+  const { messageId, comment, body: replyBody, bodyType } = replyMailSchema.parse(params);
   
   try {
+    const requestBody: Record<string, unknown> = {};
+    if (replyBody) {
+      requestBody.message = {
+        body: {
+          contentType: bodyType === 'html' ? 'HTML' : 'Text',
+          content: replyBody,
+        },
+      };
+    } else if (comment) {
+      requestBody.comment = comment;
+    }
+    
     const response = await graphRequest(`/me/messages/${sanitizePathSegment(messageId, 'messageId')}/replyAll`, {
       method: 'POST',
-      body: {
-        comment,
-      },
+      body: requestBody,
     });
     
     if (response.status === 202 || response.ok) {
@@ -738,17 +764,24 @@ async function replyAllMail(params: Record<string, unknown>) {
  * Create a reply draft (saves to Drafts folder)
  */
 async function createReplyDraft(params: Record<string, unknown>) {
-  const { messageId, comment } = createReplyDraftSchema.parse(params);
+  const { messageId, comment, body: replyBody, bodyType } = createReplyDraftSchema.parse(params);
   
   try {
-    const body: Record<string, unknown> = {};
-    if (comment) {
-      body.comment = comment;
+    const requestBody: Record<string, unknown> = {};
+    if (replyBody) {
+      requestBody.message = {
+        body: {
+          contentType: bodyType === 'html' ? 'HTML' : 'Text',
+          content: replyBody,
+        },
+      };
+    } else if (comment) {
+      requestBody.comment = comment;
     }
     
     const response = await graphRequest(`/me/messages/${sanitizePathSegment(messageId, 'messageId')}/createReply`, {
       method: 'POST',
-      body,
+      body: requestBody,
     });
     
     return handleGraphResponse(response);
@@ -761,17 +794,24 @@ async function createReplyDraft(params: Record<string, unknown>) {
  * Create a reply-all draft (saves to Drafts folder)
  */
 async function createReplyAllDraft(params: Record<string, unknown>) {
-  const { messageId, comment } = createReplyDraftSchema.parse(params);
+  const { messageId, comment, body: replyBody, bodyType } = createReplyDraftSchema.parse(params);
   
   try {
-    const body: Record<string, unknown> = {};
-    if (comment) {
-      body.comment = comment;
+    const requestBody: Record<string, unknown> = {};
+    if (replyBody) {
+      requestBody.message = {
+        body: {
+          contentType: bodyType === 'html' ? 'HTML' : 'Text',
+          content: replyBody,
+        },
+      };
+    } else if (comment) {
+      requestBody.comment = comment;
     }
     
     const response = await graphRequest(`/me/messages/${sanitizePathSegment(messageId, 'messageId')}/createReplyAll`, {
       method: 'POST',
-      body,
+      body: requestBody,
     });
     
     return handleGraphResponse(response);
@@ -1134,7 +1174,7 @@ HTML formatting (bodyType="html"):
   },
   {
     name: 'reply-mail',
-    description: 'Reply to a mail message. Sends the reply immediately to the original sender.',
+    description: 'Reply to a mail message. Sends the reply immediately to the original sender. Supports HTML formatting via body + bodyType.',
     readOnly: false,
     requiredScopes: ['Mail.Send'],
     inputSchema: {
@@ -1146,16 +1186,32 @@ HTML formatting (bodyType="html"):
         },
         comment: {
           type: 'string',
-          description: 'The reply body content',
+          description: 'Plain text reply content. Use "body" + "bodyType" instead for HTML formatting. Cannot be combined with "body".',
+        },
+        body: {
+          type: 'string',
+          description: `Reply body content in HTML (default) or plain text. Preferred over "comment" for formatted replies.
+
+HTML formatting (bodyType="html"):
+- Use semantic HTML: <p> for paragraphs, <ul>/<li> for lists, <strong> for emphasis
+- IMPORTANT: \\n does NOT work in HTML - use <p> or <br> tags instead
+- Use bodyType="text" for plain text where \\n line breaks work automatically
+
+Cannot be combined with "comment".`,
+        },
+        bodyType: {
+          type: 'string',
+          enum: ['html', 'text'],
+          description: 'Body content type. Use "html" (default) for formatted emails with structure. Use "text" for plain text where \\n line breaks work automatically.',
         },
       },
-      required: ['messageId', 'comment'],
+      required: ['messageId'],
     },
     handler: replyMail,
   },
   {
     name: 'reply-all-mail',
-    description: 'Reply to all recipients of a mail message. Sends the reply immediately to all original recipients.',
+    description: 'Reply to all recipients of a mail message. Sends the reply immediately to all original recipients. Supports HTML formatting via body + bodyType.',
     readOnly: false,
     requiredScopes: ['Mail.Send'],
     inputSchema: {
@@ -1167,16 +1223,32 @@ HTML formatting (bodyType="html"):
         },
         comment: {
           type: 'string',
-          description: 'The reply body content',
+          description: 'Plain text reply content. Use "body" + "bodyType" instead for HTML formatting. Cannot be combined with "body".',
+        },
+        body: {
+          type: 'string',
+          description: `Reply body content in HTML (default) or plain text. Preferred over "comment" for formatted replies.
+
+HTML formatting (bodyType="html"):
+- Use semantic HTML: <p> for paragraphs, <ul>/<li> for lists, <strong> for emphasis
+- IMPORTANT: \\n does NOT work in HTML - use <p> or <br> tags instead
+- Use bodyType="text" for plain text where \\n line breaks work automatically
+
+Cannot be combined with "comment".`,
+        },
+        bodyType: {
+          type: 'string',
+          enum: ['html', 'text'],
+          description: 'Body content type. Use "html" (default) for formatted emails with structure. Use "text" for plain text where \\n line breaks work automatically.',
         },
       },
-      required: ['messageId', 'comment'],
+      required: ['messageId'],
     },
     handler: replyAllMail,
   },
   {
     name: 'create-reply-draft',
-    description: 'Create a reply draft to a mail message. Saves the draft to the Drafts folder for review before sending.',
+    description: 'Create a reply draft to a mail message. Saves the draft to the Drafts folder for review before sending. Supports HTML formatting via body + bodyType.',
     readOnly: false,
     requiredScopes: ['Mail.ReadWrite'],
     inputSchema: {
@@ -1188,7 +1260,23 @@ HTML formatting (bodyType="html"):
         },
         comment: {
           type: 'string',
-          description: 'The reply body content (optional)',
+          description: 'Plain text reply content (optional). Use "body" + "bodyType" instead for HTML formatting. Cannot be combined with "body".',
+        },
+        body: {
+          type: 'string',
+          description: `Reply body content in HTML (default) or plain text. Preferred over "comment" for formatted replies.
+
+HTML formatting (bodyType="html"):
+- Use semantic HTML: <p> for paragraphs, <ul>/<li> for lists, <strong> for emphasis
+- IMPORTANT: \\n does NOT work in HTML - use <p> or <br> tags instead
+- Use bodyType="text" for plain text where \\n line breaks work automatically
+
+Cannot be combined with "comment".`,
+        },
+        bodyType: {
+          type: 'string',
+          enum: ['html', 'text'],
+          description: 'Body content type. Use "html" (default) for formatted emails with structure. Use "text" for plain text where \\n line breaks work automatically.',
         },
       },
       required: ['messageId'],
@@ -1197,7 +1285,7 @@ HTML formatting (bodyType="html"):
   },
   {
     name: 'create-reply-all-draft',
-    description: 'Create a reply-all draft to a mail message. Saves the draft to the Drafts folder for review before sending.',
+    description: 'Create a reply-all draft to a mail message. Saves the draft to the Drafts folder for review before sending. Supports HTML formatting via body + bodyType.',
     readOnly: false,
     requiredScopes: ['Mail.ReadWrite'],
     inputSchema: {
@@ -1209,7 +1297,23 @@ HTML formatting (bodyType="html"):
         },
         comment: {
           type: 'string',
-          description: 'The reply body content (optional)',
+          description: 'Plain text reply content (optional). Use "body" + "bodyType" instead for HTML formatting. Cannot be combined with "body".',
+        },
+        body: {
+          type: 'string',
+          description: `Reply body content in HTML (default) or plain text. Preferred over "comment" for formatted replies.
+
+HTML formatting (bodyType="html"):
+- Use semantic HTML: <p> for paragraphs, <ul>/<li> for lists, <strong> for emphasis
+- IMPORTANT: \\n does NOT work in HTML - use <p> or <br> tags instead
+- Use bodyType="text" for plain text where \\n line breaks work automatically
+
+Cannot be combined with "comment".`,
+        },
+        bodyType: {
+          type: 'string',
+          enum: ['html', 'text'],
+          description: 'Body content type. Use "html" (default) for formatted emails with structure. Use "text" for plain text where \\n line breaks work automatically.',
         },
       },
       required: ['messageId'],
