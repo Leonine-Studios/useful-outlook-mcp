@@ -3,7 +3,7 @@
  */
 
 import { z } from 'zod';
-import { graphRequest, handleGraphResponse, formatErrorResponse } from '../graph/client.js';
+import { graphRequest, handleGraphResponse, formatErrorResponse, type GraphResponse } from '../graph/client.js';
 import logger from '../utils/logger.js';
 import { serializeResponse } from '../utils/tonl.js';
 import { sanitizePathSegment, sanitizeODataString, sanitizeODataDatetime } from '../utils/sanitize.js';
@@ -682,31 +682,164 @@ async function createDraftMail(params: Record<string, unknown>) {
   }
 }
 
+// ============================================================================
+// Reply helpers
+// ============================================================================
+//
+// The /reply, /replyAll, /createReply, /createReplyAll Graph endpoints accept
+// either:
+//   - { comment: "text" }          -> inserted as plain text above Graph's
+//                                     auto-generated quoted thread
+//   - { message: { body: {...} } } -> REPLACES the entire prepared body,
+//                                     wiping out the quoted thread
+//
+// Neither one-shot mode gives us "agent's HTML on top + original thread (in
+// its original HTML formatting) below". So when the caller supplies `body`
+// we use a multi-stage flow:
+//
+//   Stage 1: POST /createReply (or /createReplyAll) with empty body
+//            -> Graph returns a draft whose body already contains the
+//               divider + From/Sent/To/Subject header + the original HTML
+//               thread (with attachments cloned over).
+//   Stage 2: PATCH /me/messages/{draftId} setting
+//            body.content = userHtml + preparedBody
+//            -> Agent's HTML now sits above the quoted thread.
+//   Stage 3 (only for /reply, /replyAll):
+//            POST /me/messages/{draftId}/send
+//            -> Draft is sent and moved from Drafts to Sent Items.
+//
+// On any failure after Stage 1 we best-effort DELETE the half-built draft so
+// it doesn't orphan in the user's Drafts folder.
+
+function escapeHtmlText(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function injectAboveQuotedThread(userHtml: string, preparedBody: string): string {
+  if (!preparedBody) return userHtml;
+  const bodyOpenMatch = preparedBody.match(/<body[^>]*>/i);
+  if (bodyOpenMatch && bodyOpenMatch.index !== undefined) {
+    const insertAt = bodyOpenMatch.index + bodyOpenMatch[0].length;
+    return preparedBody.slice(0, insertAt) + userHtml + preparedBody.slice(insertAt);
+  }
+  return userHtml + preparedBody;
+}
+
+type ReplyDraftResult =
+  | { ok: true; draftId: string; patchResponse: GraphResponse<unknown> }
+  | { ok: false; error: GraphResponse<unknown> };
+
+async function buildReplyDraftViaTwoStage(
+  endpoint: 'createReply' | 'createReplyAll',
+  messageId: string,
+  userBody: string,
+  isHtml: boolean,
+): Promise<ReplyDraftResult> {
+  const safeMessageId = sanitizePathSegment(messageId, 'messageId');
+
+  const stage1 = await graphRequest<{ id?: string; body?: { content?: string } }>(
+    `/me/messages/${safeMessageId}/${endpoint}`,
+    { method: 'POST', body: {} },
+  );
+  if (!stage1.ok) {
+    return { ok: false, error: stage1 };
+  }
+
+  const draftId = stage1.data?.id;
+  const preparedBody = stage1.data?.body?.content ?? '';
+  if (!draftId) {
+    logger.warn('createReply returned no draft id', { endpoint, messageId });
+    return {
+      ok: false,
+      error: {
+        ok: false,
+        status: stage1.status,
+        data: {
+          error: {
+            code: 'NoDraftId',
+            message: `${endpoint} did not return a draft id`,
+          },
+        },
+      } as GraphResponse<unknown>,
+    };
+  }
+
+  const safeDraftId = sanitizePathSegment(draftId, 'draftId');
+  const userHtml = isHtml
+    ? userBody
+    : `<div>${escapeHtmlText(userBody).replace(/\n/g, '<br/>')}</div>`;
+  const newContent = injectAboveQuotedThread(userHtml, preparedBody);
+
+  const stage2 = await graphRequest(
+    `/me/messages/${safeDraftId}`,
+    {
+      method: 'PATCH',
+      body: { body: { contentType: 'HTML', content: newContent } },
+    },
+  );
+
+  if (!stage2.ok) {
+    await graphRequest(`/me/messages/${safeDraftId}`, { method: 'DELETE' })
+      .catch((err: unknown) => {
+        logger.warn('Failed to clean up half-built reply draft', {
+          draftId,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      });
+    return { ok: false, error: stage2 };
+  }
+
+  return { ok: true, draftId, patchResponse: stage2 };
+}
+
 /**
- * Reply to a mail message (sends immediately)
+ * Reply to a mail message (sends immediately).
+ *
+ * If `body` is supplied, uses the three-stage flow (createReply -> PATCH ->
+ * send) so the agent's HTML sits above the auto-generated quoted thread.
+ * If only `comment` is supplied, uses the lighter one-shot /reply endpoint
+ * with a plain-text comment.
  */
 async function replyMail(params: Record<string, unknown>) {
   const { messageId, comment, body: replyBody, bodyType } = replyMailSchema.parse(params);
-  
+
   try {
-    const requestBody: Record<string, unknown> = {};
-    if (replyBody) {
-      requestBody.message = {
-        body: {
-          contentType: bodyType === 'html' ? 'HTML' : 'Text',
-          content: replyBody,
-        },
-      };
-    } else if (comment) {
-      requestBody.comment = comment;
+    const safeMessageId = sanitizePathSegment(messageId, 'messageId');
+
+    if (!replyBody && comment) {
+      const response = await graphRequest(`/me/messages/${safeMessageId}/reply`, {
+        method: 'POST',
+        body: { comment },
+      });
+      if (response.status === 202 || response.ok) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: serializeResponse({ success: true, message: 'Reply sent successfully' }),
+          }],
+        };
+      }
+      return handleGraphResponse(response);
     }
-    
-    const response = await graphRequest(`/me/messages/${sanitizePathSegment(messageId, 'messageId')}/reply`, {
+
+    const userBody = replyBody ?? comment ?? '';
+    const isHtml = bodyType !== 'text';
+    const built = await buildReplyDraftViaTwoStage('createReply', messageId, userBody, isHtml);
+    if (!built.ok) {
+      return handleGraphResponse(built.error);
+    }
+
+    const safeDraftId = sanitizePathSegment(built.draftId, 'draftId');
+    const sendResponse = await graphRequest(`/me/messages/${safeDraftId}/send`, {
       method: 'POST',
-      body: requestBody,
     });
-    
-    if (response.status === 202 || response.ok) {
+
+    if (sendResponse.status === 202 || sendResponse.ok) {
       return {
         content: [{
           type: 'text' as const,
@@ -714,38 +847,59 @@ async function replyMail(params: Record<string, unknown>) {
         }],
       };
     }
-    
-    return handleGraphResponse(response);
+
+    await graphRequest(`/me/messages/${safeDraftId}`, { method: 'DELETE' })
+      .catch((err: unknown) => {
+        logger.warn('Failed to clean up unsent reply draft', {
+          draftId: built.draftId,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      });
+    return handleGraphResponse(sendResponse);
   } catch (error) {
     return formatErrorResponse(error);
   }
 }
 
 /**
- * Reply all to a mail message (sends immediately)
+ * Reply all to a mail message (sends immediately). Same flow as replyMail
+ * but targeting the /createReplyAll endpoint in Stage 1.
  */
 async function replyAllMail(params: Record<string, unknown>) {
   const { messageId, comment, body: replyBody, bodyType } = replyMailSchema.parse(params);
-  
+
   try {
-    const requestBody: Record<string, unknown> = {};
-    if (replyBody) {
-      requestBody.message = {
-        body: {
-          contentType: bodyType === 'html' ? 'HTML' : 'Text',
-          content: replyBody,
-        },
-      };
-    } else if (comment) {
-      requestBody.comment = comment;
+    const safeMessageId = sanitizePathSegment(messageId, 'messageId');
+
+    if (!replyBody && comment) {
+      const response = await graphRequest(`/me/messages/${safeMessageId}/replyAll`, {
+        method: 'POST',
+        body: { comment },
+      });
+      if (response.status === 202 || response.ok) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: serializeResponse({ success: true, message: 'Reply-all sent successfully' }),
+          }],
+        };
+      }
+      return handleGraphResponse(response);
     }
-    
-    const response = await graphRequest(`/me/messages/${sanitizePathSegment(messageId, 'messageId')}/replyAll`, {
+
+    const userBody = replyBody ?? comment ?? '';
+    const isHtml = bodyType !== 'text';
+    const built = await buildReplyDraftViaTwoStage('createReplyAll', messageId, userBody, isHtml);
+    if (!built.ok) {
+      return handleGraphResponse(built.error);
+    }
+
+    const safeDraftId = sanitizePathSegment(built.draftId, 'draftId');
+    const sendResponse = await graphRequest(`/me/messages/${safeDraftId}/send`, {
       method: 'POST',
-      body: requestBody,
     });
-    
-    if (response.status === 202 || response.ok) {
+
+    if (sendResponse.status === 202 || sendResponse.ok) {
       return {
         content: [{
           type: 'text' as const,
@@ -753,68 +907,96 @@ async function replyAllMail(params: Record<string, unknown>) {
         }],
       };
     }
-    
-    return handleGraphResponse(response);
+
+    await graphRequest(`/me/messages/${safeDraftId}`, { method: 'DELETE' })
+      .catch((err: unknown) => {
+        logger.warn('Failed to clean up unsent reply-all draft', {
+          draftId: built.draftId,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      });
+    return handleGraphResponse(sendResponse);
   } catch (error) {
     return formatErrorResponse(error);
   }
 }
 
 /**
- * Create a reply draft (saves to Drafts folder)
+ * Create a reply draft (saves to Drafts folder).
+ *
+ * If `body` is supplied, uses the two-stage flow (createReply -> PATCH) so
+ * the agent's HTML sits above the auto-generated quoted thread. If only
+ * `comment` is supplied, uses the lighter one-shot /createReply endpoint
+ * with a plain-text comment. If neither is supplied, returns the empty
+ * Outlook-native draft with the quoted thread.
  */
 async function createReplyDraft(params: Record<string, unknown>) {
   const { messageId, comment, body: replyBody, bodyType } = createReplyDraftSchema.parse(params);
-  
+
   try {
-    const requestBody: Record<string, unknown> = {};
-    if (replyBody) {
-      requestBody.message = {
-        body: {
-          contentType: bodyType === 'html' ? 'HTML' : 'Text',
-          content: replyBody,
-        },
-      };
-    } else if (comment) {
-      requestBody.comment = comment;
+    const safeMessageId = sanitizePathSegment(messageId, 'messageId');
+
+    if (!replyBody && !comment) {
+      const response = await graphRequest(`/me/messages/${safeMessageId}/createReply`, {
+        method: 'POST',
+        body: {},
+      });
+      return handleGraphResponse(response);
     }
-    
-    const response = await graphRequest(`/me/messages/${sanitizePathSegment(messageId, 'messageId')}/createReply`, {
-      method: 'POST',
-      body: requestBody,
-    });
-    
-    return handleGraphResponse(response);
+
+    if (!replyBody && comment) {
+      const response = await graphRequest(`/me/messages/${safeMessageId}/createReply`, {
+        method: 'POST',
+        body: { comment },
+      });
+      return handleGraphResponse(response);
+    }
+
+    const userBody = replyBody ?? comment ?? '';
+    const isHtml = bodyType !== 'text';
+    const built = await buildReplyDraftViaTwoStage('createReply', messageId, userBody, isHtml);
+    if (!built.ok) {
+      return handleGraphResponse(built.error);
+    }
+    return handleGraphResponse(built.patchResponse);
   } catch (error) {
     return formatErrorResponse(error);
   }
 }
 
 /**
- * Create a reply-all draft (saves to Drafts folder)
+ * Create a reply-all draft (saves to Drafts folder). Same flow as
+ * createReplyDraft but targeting the /createReplyAll endpoint in Stage 1.
  */
 async function createReplyAllDraft(params: Record<string, unknown>) {
   const { messageId, comment, body: replyBody, bodyType } = createReplyDraftSchema.parse(params);
-  
+
   try {
-    const requestBody: Record<string, unknown> = {};
-    if (replyBody) {
-      requestBody.message = {
-        body: {
-          contentType: bodyType === 'html' ? 'HTML' : 'Text',
-          content: replyBody,
-        },
-      };
-    } else if (comment) {
-      requestBody.comment = comment;
+    const safeMessageId = sanitizePathSegment(messageId, 'messageId');
+
+    if (!replyBody && !comment) {
+      const response = await graphRequest(`/me/messages/${safeMessageId}/createReplyAll`, {
+        method: 'POST',
+        body: {},
+      });
+      return handleGraphResponse(response);
     }
-    
-    const response = await graphRequest(`/me/messages/${sanitizePathSegment(messageId, 'messageId')}/createReplyAll`, {
-      method: 'POST',
-      body: requestBody,
-    });
-    
-    return handleGraphResponse(response);
+
+    if (!replyBody && comment) {
+      const response = await graphRequest(`/me/messages/${safeMessageId}/createReplyAll`, {
+        method: 'POST',
+        body: { comment },
+      });
+      return handleGraphResponse(response);
+    }
+
+    const userBody = replyBody ?? comment ?? '';
+    const isHtml = bodyType !== 'text';
+    const built = await buildReplyDraftViaTwoStage('createReplyAll', messageId, userBody, isHtml);
+    if (!built.ok) {
+      return handleGraphResponse(built.error);
+    }
+    return handleGraphResponse(built.patchResponse);
   } catch (error) {
     return formatErrorResponse(error);
   }
@@ -1174,7 +1356,12 @@ HTML formatting (bodyType="html"):
   },
   {
     name: 'reply-mail',
-    description: 'Reply to a mail message. Sends the reply immediately to the original sender. Supports HTML formatting via body + bodyType.',
+    description: `Reply to a mail message. Sends immediately to the original sender.
+
+Thread preservation: the original message is automatically appended below your reply, with its original HTML formatting (signatures, inline images, prior quoted thread) intact - exactly the way clicking "Reply" in Outlook works natively.
+
+Use "body" for formatted replies (HTML on top of the quoted thread).
+Use "comment" for a quick plain-text reply.`,
     readOnly: false,
     requiredScopes: ['Mail.Send'],
     inputSchema: {
@@ -1186,23 +1373,24 @@ HTML formatting (bodyType="html"):
         },
         comment: {
           type: 'string',
-          description: 'Plain text reply content. Use "body" + "bodyType" instead for HTML formatting. Cannot be combined with "body".',
+          description: 'Plain-text reply content (one-shot fast path). HTML tags will be escaped. Ignored if "body" is also set.',
         },
         body: {
           type: 'string',
-          description: `Reply body content in HTML (default) or plain text. Preferred over "comment" for formatted replies.
+          description: `Reply body content. Preserved as-is on top of the auto-generated quoted thread.
 
-HTML formatting (bodyType="html"):
-- Use semantic HTML: <p> for paragraphs, <ul>/<li> for lists, <strong> for emphasis
-- IMPORTANT: \\n does NOT work in HTML - use <p> or <br> tags instead
-- Use bodyType="text" for plain text where \\n line breaks work automatically
+HTML formatting (bodyType="html", default):
+- Use semantic HTML: <p>, <br>, <ul>/<li>, <strong>, <em>, links, etc.
+- \\n does NOT render as a line break - use <br> or <p> tags
+- Inline images via cid: references are not auto-cloned; use plain HTML
 
-Cannot be combined with "comment".`,
+Plain text (bodyType="text"):
+- \\n renders as a line break (wrapped automatically)`,
         },
         bodyType: {
           type: 'string',
           enum: ['html', 'text'],
-          description: 'Body content type. Use "html" (default) for formatted emails with structure. Use "text" for plain text where \\n line breaks work automatically.',
+          description: 'Content type of "body". Default "html". Use "text" if "body" is plain text with \\n line breaks.',
         },
       },
       required: ['messageId'],
@@ -1211,7 +1399,12 @@ Cannot be combined with "comment".`,
   },
   {
     name: 'reply-all-mail',
-    description: 'Reply to all recipients of a mail message. Sends the reply immediately to all original recipients. Supports HTML formatting via body + bodyType.',
+    description: `Reply to all recipients of a mail message. Sends immediately to every original To/Cc recipient.
+
+Thread preservation: the original message is automatically appended below your reply, with its original HTML formatting (signatures, inline images, prior quoted thread) intact - exactly the way clicking "Reply All" in Outlook works natively.
+
+Use "body" for formatted replies (HTML on top of the quoted thread).
+Use "comment" for a quick plain-text reply.`,
     readOnly: false,
     requiredScopes: ['Mail.Send'],
     inputSchema: {
@@ -1223,23 +1416,24 @@ Cannot be combined with "comment".`,
         },
         comment: {
           type: 'string',
-          description: 'Plain text reply content. Use "body" + "bodyType" instead for HTML formatting. Cannot be combined with "body".',
+          description: 'Plain-text reply content (one-shot fast path). HTML tags will be escaped. Ignored if "body" is also set.',
         },
         body: {
           type: 'string',
-          description: `Reply body content in HTML (default) or plain text. Preferred over "comment" for formatted replies.
+          description: `Reply body content. Preserved as-is on top of the auto-generated quoted thread.
 
-HTML formatting (bodyType="html"):
-- Use semantic HTML: <p> for paragraphs, <ul>/<li> for lists, <strong> for emphasis
-- IMPORTANT: \\n does NOT work in HTML - use <p> or <br> tags instead
-- Use bodyType="text" for plain text where \\n line breaks work automatically
+HTML formatting (bodyType="html", default):
+- Use semantic HTML: <p>, <br>, <ul>/<li>, <strong>, <em>, links, etc.
+- \\n does NOT render as a line break - use <br> or <p> tags
+- Inline images via cid: references are not auto-cloned; use plain HTML
 
-Cannot be combined with "comment".`,
+Plain text (bodyType="text"):
+- \\n renders as a line break (wrapped automatically)`,
         },
         bodyType: {
           type: 'string',
           enum: ['html', 'text'],
-          description: 'Body content type. Use "html" (default) for formatted emails with structure. Use "text" for plain text where \\n line breaks work automatically.',
+          description: 'Content type of "body". Default "html". Use "text" if "body" is plain text with \\n line breaks.',
         },
       },
       required: ['messageId'],
@@ -1248,7 +1442,13 @@ Cannot be combined with "comment".`,
   },
   {
     name: 'create-reply-draft',
-    description: 'Create a reply draft to a mail message. Saves the draft to the Drafts folder for review before sending. Supports HTML formatting via body + bodyType.',
+    description: `Create a reply draft to a mail message. Saves to the Drafts folder for review before sending.
+
+Thread preservation: the original message is automatically appended below your reply, with its original HTML formatting (signatures, inline images, prior quoted thread) intact - exactly the way clicking "Reply" in Outlook works natively.
+
+Use "body" for formatted drafts (HTML on top of the quoted thread).
+Use "comment" for a quick plain-text draft.
+Omit both to get an empty Outlook-native reply draft (quoted thread only) the user can fill in.`,
     readOnly: false,
     requiredScopes: ['Mail.ReadWrite'],
     inputSchema: {
@@ -1260,23 +1460,24 @@ Cannot be combined with "comment".`,
         },
         comment: {
           type: 'string',
-          description: 'Plain text reply content (optional). Use "body" + "bodyType" instead for HTML formatting. Cannot be combined with "body".',
+          description: 'Plain-text reply content (one-shot fast path). HTML tags will be escaped. Ignored if "body" is also set.',
         },
         body: {
           type: 'string',
-          description: `Reply body content in HTML (default) or plain text. Preferred over "comment" for formatted replies.
+          description: `Reply body content. Preserved as-is on top of the auto-generated quoted thread.
 
-HTML formatting (bodyType="html"):
-- Use semantic HTML: <p> for paragraphs, <ul>/<li> for lists, <strong> for emphasis
-- IMPORTANT: \\n does NOT work in HTML - use <p> or <br> tags instead
-- Use bodyType="text" for plain text where \\n line breaks work automatically
+HTML formatting (bodyType="html", default):
+- Use semantic HTML: <p>, <br>, <ul>/<li>, <strong>, <em>, links, etc.
+- \\n does NOT render as a line break - use <br> or <p> tags
+- Inline images via cid: references are not auto-cloned; use plain HTML
 
-Cannot be combined with "comment".`,
+Plain text (bodyType="text"):
+- \\n renders as a line break (wrapped automatically)`,
         },
         bodyType: {
           type: 'string',
           enum: ['html', 'text'],
-          description: 'Body content type. Use "html" (default) for formatted emails with structure. Use "text" for plain text where \\n line breaks work automatically.',
+          description: 'Content type of "body". Default "html". Use "text" if "body" is plain text with \\n line breaks.',
         },
       },
       required: ['messageId'],
@@ -1285,7 +1486,13 @@ Cannot be combined with "comment".`,
   },
   {
     name: 'create-reply-all-draft',
-    description: 'Create a reply-all draft to a mail message. Saves the draft to the Drafts folder for review before sending. Supports HTML formatting via body + bodyType.',
+    description: `Create a reply-all draft to a mail message. Saves to the Drafts folder for review before sending.
+
+Thread preservation: the original message is automatically appended below your reply, with its original HTML formatting (signatures, inline images, prior quoted thread) intact - exactly the way clicking "Reply All" in Outlook works natively.
+
+Use "body" for formatted drafts (HTML on top of the quoted thread).
+Use "comment" for a quick plain-text draft.
+Omit both to get an empty Outlook-native reply-all draft (quoted thread only) the user can fill in.`,
     readOnly: false,
     requiredScopes: ['Mail.ReadWrite'],
     inputSchema: {
@@ -1297,23 +1504,24 @@ Cannot be combined with "comment".`,
         },
         comment: {
           type: 'string',
-          description: 'Plain text reply content (optional). Use "body" + "bodyType" instead for HTML formatting. Cannot be combined with "body".',
+          description: 'Plain-text reply content (one-shot fast path). HTML tags will be escaped. Ignored if "body" is also set.',
         },
         body: {
           type: 'string',
-          description: `Reply body content in HTML (default) or plain text. Preferred over "comment" for formatted replies.
+          description: `Reply body content. Preserved as-is on top of the auto-generated quoted thread.
 
-HTML formatting (bodyType="html"):
-- Use semantic HTML: <p> for paragraphs, <ul>/<li> for lists, <strong> for emphasis
-- IMPORTANT: \\n does NOT work in HTML - use <p> or <br> tags instead
-- Use bodyType="text" for plain text where \\n line breaks work automatically
+HTML formatting (bodyType="html", default):
+- Use semantic HTML: <p>, <br>, <ul>/<li>, <strong>, <em>, links, etc.
+- \\n does NOT render as a line break - use <br> or <p> tags
+- Inline images via cid: references are not auto-cloned; use plain HTML
 
-Cannot be combined with "comment".`,
+Plain text (bodyType="text"):
+- \\n renders as a line break (wrapped automatically)`,
         },
         bodyType: {
           type: 'string',
           enum: ['html', 'text'],
-          description: 'Body content type. Use "html" (default) for formatted emails with structure. Use "text" for plain text where \\n line breaks work automatically.',
+          description: 'Content type of "body". Default "html". Use "text" if "body" is plain text with \\n line breaks.',
         },
       },
       required: ['messageId'],
