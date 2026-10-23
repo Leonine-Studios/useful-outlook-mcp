@@ -90,9 +90,6 @@ export function createApp() {
   // OAuth metadata and proxy endpoints
   app.use(authRouter);
   
-  // Create MCP server
-  const mcpServer = createMcpServer(VERSION);
-  
   // Create rate limit middleware instance
   const rateLimit = rateLimitMiddleware();
   
@@ -120,6 +117,7 @@ export function createApp() {
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: undefined, // Stateless mode
         });
+        const mcpServer = createMcpServer(VERSION);
         
         // For GET requests (SSE streams), set up keep-alive to prevent client timeout
         let keepAliveInterval: NodeJS.Timeout | undefined;
