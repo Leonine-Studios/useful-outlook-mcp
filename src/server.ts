@@ -14,6 +14,7 @@ import logger, { setLogLevel, printStartupBanner } from './utils/logger.js';
 import { allTools, getFilteredTools } from './tools/index.js';
 
 const VERSION = '1.0.0';
+const SHUTDOWN_GRACE_MS = 5_000;
 
 /**
  * Create and configure the Express application
@@ -221,4 +222,13 @@ export async function startServer(): Promise<void> {
   server.timeout = 0; // Disable socket timeout
   server.keepAliveTimeout = 0; // Disable keep-alive timeout
   server.headersTimeout = 0; // Disable headers timeout
+
+  const shutdown = (signal: string) => {
+    logger.info('Shutting down', { signal });
+    server.close(() => process.exit(0));
+    server.closeIdleConnections();
+    setTimeout(() => server.closeAllConnections(), SHUTDOWN_GRACE_MS).unref();
+  };
+  process.once('SIGTERM', () => shutdown('SIGTERM'));
+  process.once('SIGINT', () => shutdown('SIGINT'));
 }

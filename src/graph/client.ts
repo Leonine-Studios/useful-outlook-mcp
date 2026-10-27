@@ -10,6 +10,8 @@ import logger from '../utils/logger.js';
 import { GRAPH_API_BASE } from '../config.js';
 import { serializeResponse } from '../utils/tonl.js';
 
+const GRAPH_REQUEST_TIMEOUT_MS = 30_000;
+
 export interface GraphRequestOptions {
   method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
   body?: unknown;
@@ -59,6 +61,7 @@ export async function graphRequest<T = unknown>(
   const requestOptions: RequestInit = {
     method: options.method || 'GET',
     headers,
+    signal: AbortSignal.timeout(GRAPH_REQUEST_TIMEOUT_MS),
   };
   
   if (options.body && options.method !== 'GET') {
