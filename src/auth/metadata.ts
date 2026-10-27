@@ -274,6 +274,7 @@ router.post('/token', async (req: Request, res: Response) => {
         'Content-Type': 'application/x-www-form-urlencoded',
       },
       body: params,
+      signal: AbortSignal.timeout(15_000),
     });
     
     const data = await response.json();

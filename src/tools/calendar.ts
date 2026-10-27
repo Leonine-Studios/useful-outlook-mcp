@@ -97,7 +97,7 @@ async function fetchAllRooms(): Promise<Array<{
         city: r.address?.city,
       };
     }).filter(r => r.emailAddress); // Only include rooms with email
-  } catch (error) {
+  } catch {
     // If room fetch fails, return empty array (graceful degradation)
     return [];
   }
@@ -362,39 +362,6 @@ async function listCalendarEvents(params: Record<string, unknown>) {
 }
 
 /**
- * Build filter expression for calendar event search
- */
-/**
- * Format a free-text query parameter for calendar search
- * 
- * - If query looks like raw KQL (contains operators), pass through as-is
- * - If query is a multi-word phrase, quote it
- * - Single terms pass through unquoted
- */
-function formatCalendarQuery(query: string): string {
-  const cleaned = query.trim();
-  
-  // Check if this looks like raw KQL (contains operators)
-  const hasKqlOperators = /\b(AND|OR|NOT)\b/i.test(cleaned);
-  
-  if (hasKqlOperators) {
-    // Raw KQL - pass through as-is
-    return cleaned;
-  }
-  
-  // Only quote multi-word phrases (those with spaces)
-  // Single terms like "deadline", "project" work better unquoted
-  if (/\s/.test(cleaned)) {
-    // Multi-word phrase - escape existing quotes and wrap
-    const escaped = cleaned.replace(/"/g, '\\"');
-    return `\\"${escaped}\\"`;
-  }
-  
-  // Single term - pass through unquoted
-  return cleaned;
-}
-
-/**
  * Build OData filter expression for calendar events
  * 
  * Note: Graph API calendar events have severe limitations:
@@ -580,7 +547,8 @@ function isWithinMeetingHours(
  */
 async function findMeetingTimes(params: Record<string, unknown>) {
   const parsed = findMeetingTimesSchema.parse(params);
-  let { attendees, durationMinutes, searchWindowStart, searchWindowEnd, meetingHoursStart, meetingHoursEnd, isOnlineMeeting, isOrganizerOptional, maxSuggestions, timeZone } = parsed;
+  const { durationMinutes, searchWindowStart, searchWindowEnd, meetingHoursStart, meetingHoursEnd, isOnlineMeeting, isOrganizerOptional, maxSuggestions, timeZone } = parsed;
+  let { attendees } = parsed;
   
   // Auto-fetch rooms for in-person meetings
   let roomMetadata: Array<{ emailAddress: string; displayName: string; building?: string; city?: string }> = [];

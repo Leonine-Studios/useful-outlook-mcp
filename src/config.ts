@@ -80,6 +80,10 @@ export function getConfig(): Config {
   return cachedConfig;
 }
 
+export function resetConfig(): void {
+  cachedConfig = null;
+}
+
 /**
  * Microsoft Entra ID endpoints
  */

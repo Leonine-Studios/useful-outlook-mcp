@@ -70,7 +70,6 @@ Set `isOnlineMeeting: false` to enable room search. For online meetings (default
 | `MS365_MCP_RATE_LIMIT_REQUESTS` | `30` | Requests per window |
 | `MS365_MCP_RATE_LIMIT_WINDOW_MS` | `60000` | Window size (ms) |
 | `MS365_MCP_ALLOWED_TENANTS` | - | Restrict to specific tenants |
-
 ## Docker
 
 From GitHub Container Registry:
@@ -105,6 +104,16 @@ docker run -p 3000:3000 \
 | `POST /register` | Dynamic client registration |
 
 ## Testing
+
+```bash
+npm run check                                # typecheck, lint, unit and HTTP tests
+docker build -t useful-outlook-mcp .
+bash scripts/smoke-test.sh useful-outlook-mcp  # container health and MCP initialize
+```
+
+CI runs the same checks and the smoke test on every pull request. Images are published only from `main` and version tags.
+
+For manual testing:
 
 ```bash
 npm run dev
